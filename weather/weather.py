@@ -9,35 +9,47 @@ import re
 load_dotenv()
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# --- Geocode place using OpenStreetMap ---
-def geocode(place: str):
 
-    print(place)
+# ---------------- SAFE VALIDATION ----------------
+def validate_inputs(dt, location_query):
+    if dt is None:
+        return False, "I couldn't understand the date or time."
+
+    if not location_query or len(location_query.strip()) < 3:
+        return False, "I couldn't understand the location."
+
+    return True, None
+
+
+# ---------------- GEOCODE ------------------------
+def geocode(place: str):
     url = f"https://nominatim.openstreetmap.org/search?format=json&q={place}&limit=1"
     resp = requests.get(url, headers={"User-Agent": "weather-assistant/1.0"})
     data = resp.json()
-    print(float(data[0]["lat"]))
-    print(float(data[0]["lon"]))
+
     if not data:
-        raise ValueError(f"Location not found: {place}")
+        return None   # <-- SAFETY: return None instead of crashing
+
     return {
         "lat": float(data[0]["lat"]),
         "lon": float(data[0]["lon"]),
         "display_name": data[0]["display_name"]
     }
 
-# --- Fetch hourly weather from Open-Meteo ---
+
+# ---------------- FETCH WEATHER ------------------
 def fetch_weather(lat: float, lon: float):
     url = (
         f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-        f"&hourly=temperature_2m,relativehumidity_2m,precipitation,weathercode,windspeed_10m,cloudcover"
-        f"&timezone=auto"
+        f"&hourly=temperature_2m,relativehumidity_2m,precipitation,weathercode,"
+        f"windspeed_10m,cloudcover&timezone=auto"
     )
     resp = requests.get(url)
     data = resp.json()
     return data["hourly"]
 
-# --- Round time to nearest 10 minutes ---
+
+# ---------------- ROUND MINUTES ------------------
 def round_to_nearest_10(hour: int, minute: int):
     rounded_min = round(minute / 10) * 10
     h, m = hour, rounded_min
@@ -46,10 +58,12 @@ def round_to_nearest_10(hour: int, minute: int):
         m = 0
     return h, m
 
-# --- Get closest time entry in hourly data ---
+
+# ---------------- CLOSEST HOURLY ENTRY -----------
 def get_closest_hourly_data(hourly: dict, target_time: datetime):
     closest_index = None
     min_diff = float("inf")
+
     for i, t_str in enumerate(hourly["time"]):
         t = datetime.fromisoformat(t_str)
         diff = abs((t - target_time).total_seconds())
@@ -70,14 +84,16 @@ def get_closest_hourly_data(hourly: dict, target_time: datetime):
         "weathercode": hourly["weathercode"][closest_index]
     }
 
-# --- Generate human-readable forecast via GPT ---
+
+# ---------------- GPT RESPONSE -------------------
 def generate_ai_response(user_query: str, weather_data: dict):
     prompt = f"""
 You are a friendly weather assistant.
 User query: "{user_query}"
 Weather data: {weather_data}
 
-Provide a short, human-readable weather summary including temperature, humidity, precipitation, wind, cloud cover, and a natural description (sunny, rainy, snowy, overcast, etc.).
+Provide a short, human-readable weather summary including temperature,
+humidity, precipitation, wind, cloud cover, and a natural description.
 """
     response = openai_client.responses.create(
         model="gpt-5-nano",
@@ -85,13 +101,13 @@ Provide a short, human-readable weather summary including temperature, humidity,
     )
     return response.output_text or "No response from AI"
 
-# --- Parse query for date/time and location ---
+
+# ---------------- PARSE QUERY --------------------
 def parse_query_datetime(user_query: str):
-    # Extract date/time
     date_matches = search_dates(user_query, settings={'PREFER_DATES_FROM': 'future'})
+
     if date_matches:
         parsed_dt = date_matches[0][1]
-        # Remove date parts from query
         location_query = user_query
         for text, _ in date_matches:
             location_query = location_query.replace(text, "")
@@ -99,35 +115,53 @@ def parse_query_datetime(user_query: str):
         parsed_dt = datetime.now()
         location_query = user_query
 
-    # Clean location string
     location_query = re.sub(r'\b(weather|in)\b', '', location_query, flags=re.IGNORECASE).strip()
 
-    # If the string is too short, fallback
     if len(location_query) < 3:
         location_query = "Berlin"
 
-    # Round minutes to nearest 10
     hour, minute = round_to_nearest_10(parsed_dt.hour, parsed_dt.minute)
     parsed_dt = parsed_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-    # Shift to next day if in the past
     if parsed_dt < datetime.now():
         parsed_dt += timedelta(days=1)
 
     return parsed_dt, location_query
 
-# --- Main assistant function ---
+
+# ---------------- MAIN ASSISTANT -----------------
 def weather_assistant(user_query: str):
-    parsed_dt, location_query = parse_query_datetime(user_query)
-    loc = geocode(location_query)
-    hourly = fetch_weather(loc["lat"], loc["lon"])
-    closest_data = get_closest_hourly_data(hourly, parsed_dt)
-    ai_answer = generate_ai_response(user_query, closest_data)
-    print(f"Location: {loc['display_name']}")
-    print(f"Time: {parsed_dt.isoformat()}")
-    print(ai_answer)
+    try:
+        parsed_dt, location_query = parse_query_datetime(user_query)
+
+        ok, error_msg = validate_inputs(parsed_dt, location_query)
+        if not ok:
+            print(error_msg)
+            return
+
+        loc = geocode(location_query)
+        if loc is None:
+            print("I couldn't find that location. Please specify another.")
+            return
+
+        hourly = fetch_weather(loc["lat"], loc["lon"])
+        closest_data = get_closest_hourly_data(hourly, parsed_dt)
+
+        if closest_data is None:
+            print("Weather data unavailable for that time.")
+            return
+
+        ai_answer = generate_ai_response(user_query, closest_data)
+
+        print(f"Location: {loc['display_name']}")
+        print(f"Time: {parsed_dt.isoformat()}")
+        print(ai_answer)
+
+    except Exception:
+        print("I couldn't understand your request. Please rephrase it.")
 
 
+# ---------------- ENTRY POINT --------------------
 if __name__ == "__main__":
     import sys
     query = " ".join(sys.argv[1:]) or "Weather in Berlin tomorrow at noon"
