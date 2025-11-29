@@ -21,6 +21,181 @@ openai.api_key = api_key
 tags_for_places = []
 settings = {}
 
+
+@app.get("/filter-images")
+def filter_images_by_context(
+    website: str = Query(..., description="Website URL"),
+    context: str = Query(..., description="What are you looking for? (e.g., 'bar atmosphere', 'food', 'interior')"),
+    max_pages: int = Query(3, description="Maximum pages to scrape"),
+    max_images: int = Query(10, description="Maximum images to analyze")
+):
+    """
+    Scrapes images from a website and filters them by context using GPT-4 Vision
+    """
+    # 1. First, get all images
+    scrape_result = scrape_website_images(website, max_pages, max_images * 2)
+    
+    if scrape_result.get("status") != "success":
+        return scrape_result
+    
+    all_images = scrape_result.get("images", [])
+    
+    if not all_images:
+        return {
+            "status": "error",
+            "message": "No images found on the website"
+        }
+    
+    # 2. Filter images using GPT-4 Vision
+    filtered_images = []
+    
+    for img_url in all_images[:max_images]:
+        try:
+            # Request to GPT-4 Vision
+            response = openai.chat.completions.create(
+                model="gpt-4o-mini",  # Using gpt-4o-mini (cheaper)
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"""Analyze this image and determine if it matches the following context: "{context}".
+
+Answer with a JSON object:
+{{
+  "matches": true or false,
+  "confidence": 0.0 to 1.0,
+  "description": "brief description of what you see",
+  "reason": "why it matches or doesn't match"
+}}
+
+Only return JSON, nothing else."""
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": img_url
+                                }
+                            }
+                        ]
+                    }
+                ],
+                max_tokens=300
+            )
+            
+            # Parse response
+            gpt_response = response.choices[0].message.content
+            analysis = json.loads(gpt_response)
+            
+            # If image matches the context
+            if analysis.get("matches") and analysis.get("confidence", 0) > 0.6:
+                filtered_images.append({
+                    "url": img_url,
+                    "confidence": analysis.get("confidence"),
+                    "description": analysis.get("description"),
+                    "reason": analysis.get("reason")
+                })
+            
+            print(f"✅ Analyzed: {img_url[:50]}... - Match: {analysis.get('matches')}")
+        
+        except Exception as e:
+            print(f"❌ Analysis error {img_url[:50]}...: {e}")
+            continue
+    
+    # Sort by confidence
+    filtered_images.sort(key=lambda x: x["confidence"], reverse=True)
+    
+    return {
+        "status": "success",
+        "website": website,
+        "context": context,
+        "total_images_analyzed": len(all_images[:max_images]),
+        "matched_images": len(filtered_images),
+        "filtered_images": filtered_images
+    }
+
+
+@app.get("/smart-search")
+def smart_search_with_images(
+    request: str = Query(..., description="Your request (e.g., 'Find a bar with cozy atmosphere in Košice')"),
+    lat: float = Query(48.7164, description="Latitude"),
+    lon: float = Query(21.2611, description="Longitude"),
+    radius: int = Query(500, description="Search radius in meters")
+):
+    """
+    Smart search: analyzes request, finds places and filters photos
+    """
+    # 1. Analyze request through /request
+    request_result = process_request(request)
+    
+    if request_result.get("status") != "success":
+        return request_result
+    
+    parsed_data = request_result.get("parsed_data", {})
+    place_types = parsed_data.get("place_types", ["restaurant"])
+    
+    # 2. Find places through OSM
+    places = find_places_osm(lat, lon, radius, place_types[0] if place_types else "restaurant")
+    
+    # 3. For each place get and filter photos
+    results = []
+    for place in places[:3]:  # First 3 places
+        website = place.get("tags", {}).get("website")
+        
+        if website:
+            # Determine context from request
+            context = f"{parsed_data.get('cuisine', '')} food and {parsed_data.get('activity_type', '')} atmosphere"
+            
+            # Get filtered photos
+            filtered = filter_images_by_context(website, context, max_pages=2, max_images=5)
+            
+            results.append({
+                "place_name": place.get("name"),
+                "website": website,
+                "coordinates": {"lat": place.get("lat"), "lon": place.get("lon")},
+                "filtered_images": filtered.get("filtered_images", [])
+            })
+    
+    return {
+        "status": "success",
+        "original_request": request,
+        "parsed_data": parsed_data,
+        "results": results
+    }
+
+
+def find_places_osm(lat: float, lon: float, radius: int, amenity: str):
+    """Search for places through OpenStreetMap"""
+    url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json];
+    node(around:{radius},{lat},{lon})[amenity={amenity}];
+    out body;
+    """
+    
+    try:
+        response = requests.get(url, params={"data": query}, timeout=30)
+        if response.status_code != 200:
+            return []
+        
+        data = response.json()
+        places = []
+        
+        for element in data.get("elements", []):
+            tags = element.get("tags", {})
+            places.append({
+                "name": tags.get("name", "Unknown"),
+                "lat": element["lat"],
+                "lon": element["lon"],
+                "tags": tags
+            })
+        
+        return places
+    except Exception as e:
+        print(f"❌ OSM error: {e}")
+        return []
+
 @app.get("/")
 def read_root():
     return {"message": "Hello, FastAPI!"}
@@ -32,7 +207,7 @@ def scrape_website_images(
     max_images: int = Query(20, description="Maximum images to collect")
 ):
     """
-    Парсить зображення з веб-сайту (без SVG), включаючи внутрішні сторінки
+    Scrapes images from a website (without SVG), including internal pages
     """
     try:
         headers = {
@@ -45,12 +220,12 @@ def scrape_website_images(
         base_domain = urlparse(website).netloc
         
         def is_valid_url(url):
-            """Перевіряє, чи URL належить до того ж домену"""
+            """Check if URL belongs to the same domain"""
             parsed = urlparse(url)
             return parsed.netloc == base_domain and parsed.scheme in ['http', 'https']
         
         def extract_images_and_links(url):
-            """Витягує зображення та посилання зі сторінки"""
+            """Extract images and links from a page"""
             if url in visited_urls or len(visited_urls) >= max_pages:
                 return [], []
             
@@ -60,12 +235,12 @@ def scrape_website_images(
                 response = requests.get(url, headers=headers, timeout=10)
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Знайти всі зображення
+                # Find all images
                 page_images = []
                 for img in soup.find_all('img'):
                     img_url = img.get('src') or img.get('data-src')
                     if img_url:
-                        # Конвертувати відносні URL в абсолютні
+                        # Convert relative URLs to absolute
                         if img_url.startswith('//'):
                             img_url = 'https:' + img_url
                         elif img_url.startswith('/'):
@@ -73,7 +248,7 @@ def scrape_website_images(
                         elif not img_url.startswith('http'):
                             img_url = urljoin(url, img_url)
                         
-                        # Фільтрувати SVG, логотипи та іконки
+                        # Filter SVG, logos and icons
                         img_lower = img_url.lower()
                         if all([
                             '.svg' not in img_lower,
@@ -87,43 +262,43 @@ def scrape_website_images(
                         ]):
                             page_images.append(img_url)
                 
-                # Знайти всі внутрішні посилання
+                # Find all internal links
                 page_links = []
                 for link in soup.find_all('a', href=True):
                     href = link['href']
                     
-                    # Конвертувати відносні URL
+                    # Convert relative URLs
                     if href.startswith('/'):
                         href = urljoin(url, href)
                     elif not href.startswith('http'):
                         href = urljoin(url, href)
                     
-                    # Фільтрувати тільки внутрішні посилання
+                    # Filter only internal links
                     if is_valid_url(href) and href not in visited_urls:
-                        # Ігнорувати посилання на файли та якорі
+                        # Ignore links to files and anchors
                         if not any(ext in href.lower() for ext in ['.pdf', '.doc', '.zip', '#']):
                             page_links.append(href)
                 
                 return page_images, page_links
             
             except Exception as e:
-                print(f"❌ Помилка при обробці {url}: {e}")
+                print(f"❌ Error processing {url}: {e}")
                 return [], []
         
-        # Обхід сторінок
+        # Traverse pages
         while urls_to_visit and len(visited_urls) < max_pages and len(images_found) < max_images:
             current_url = urls_to_visit.pop(0)
             
-            print(f"🔍 Сканування: {current_url}")
+            print(f"🔍 Scanning: {current_url}")
             page_images, page_links = extract_images_and_links(current_url)
             
-            # Додати знайдені зображення
+            # Add found images
             for img in page_images:
                 if len(images_found) < max_images:
                     images_found.add(img)
             
-            # Додати нові посилання для обходу
-            for link in page_links[:3]:  # Обмежити кількість посилань з кожної сторінки
+            # Add new links for traversal
+            for link in page_links[:3]:  # Limit number of links from each page
                 if link not in urls_to_visit and link not in visited_urls:
                     urls_to_visit.append(link)
         
@@ -146,14 +321,14 @@ def scrape_website_images(
 @app.get("/request")
 def process_request(request: str = Query(..., description="Your request")):
     """
-    Обробляє запит користувача, визначає тип активності/місця та преференції.
-    Повертає структуровані дані у форматі JSON.
+    Processes user request, determines activity type/place and preferences.
+    Returns structured data in JSON format.
     """
     global tags_for_places, settings
     
-    # Використовуйте gpt-3.5-turbo замість gpt-4 (швидше і дешевше)
+    # Use gpt-3.5-turbo instead of gpt-4 (faster and cheaper)
     response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",  # Змінено з gpt-4-1106-preview
+        model="gpt-3.5-turbo",
         messages=[
             {
                 "role": "system", 
@@ -190,18 +365,18 @@ Only return valid JSON, nothing else."""
             },
             {"role": "user", "content": request}
         ],
-        temperature=0.3,  # Нижча температура = швидша відповідь
-        max_tokens=500     # Обмеження токенів
+        temperature=0.3,  # Lower temperature = faster response
+        max_tokens=500     # Token limit
     )
     
-    # Отримати відповідь від GPT
+    # Get response from GPT
     gpt_response = response.choices[0].message.content
     
     try:
-        # Парсинг JSON відповіді
+        # Parse JSON response
         parsed_data = json.loads(gpt_response)
         
-        # Оновити глобальні змінні
+        # Update global variables
         tags_for_places = parsed_data.get("place_types", [])
         settings = {
             "activity_type": parsed_data.get("activity_type"),
@@ -212,7 +387,7 @@ Only return valid JSON, nothing else."""
             "additional_notes": parsed_data.get("additional_notes")
         }
         
-        # Повернути структуровані дані
+        # Return structured data
         return {
             "status": "success",
             "original_request": request,
@@ -223,7 +398,7 @@ Only return valid JSON, nothing else."""
         }
         
     except json.JSONDecodeError as e:
-        # Якщо GPT не повернув валідний JSON
+        # If GPT didn't return valid JSON
         return {
             "status": "error",
             "message": "Failed to parse GPT response",
@@ -239,8 +414,11 @@ Only return valid JSON, nothing else."""
 
 @app.get("/answer")
 def get_answer(question: str = Query(..., description="Your question")):
+    """
+    Answers general questions about daily life
+    """
     response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",  # Змінено з gpt-4-1106-preview
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "You are an AI assistant that helps with questions about daily routines and everyday life. Do not answer questions outside this topic; politely refuse to respond to unrelated questions."},
             {"role": "user", "content": question}

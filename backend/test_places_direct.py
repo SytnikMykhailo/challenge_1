@@ -6,7 +6,7 @@ from typing import List, Dict
 # 1. OVERPASS API (OpenStreetMap)
 # ============================================================
 def test_overpass_api():
-    """Тестування Overpass API (OSM)"""
+    """Testing Overpass API (OSM)"""
     print("\n" + "="*60)
     print("OVERPASS API (OpenStreetMap)")
     print("="*60)
@@ -23,20 +23,20 @@ def test_overpass_api():
             response = requests.get(url, params={"data": query}, timeout=30)
             
             if response.status_code != 200:
-                print(f"❌ Помилка: статус {response.status_code}")
+                print(f"❌ Error: status {response.status_code}")
                 return []
             
             if not response.text:
-                print("❌ Порожня відповідь від API")
+                print("❌ Empty response from API")
                 return []
             
             data = response.json()
             
         except requests.exceptions.JSONDecodeError:
-            print(f"❌ Помилка декодування JSON для {amenity}")
+            print(f"❌ JSON decoding error for {amenity}")
             return []
         except Exception as e:
-            print(f"❌ Помилка запиту: {e}")
+            print(f"❌ Request error: {e}")
             return []
         
         places = []
@@ -57,25 +57,25 @@ def test_overpass_api():
         
         return places
     
-    # Тестування
+    # Testing
     lat, lon, radius = 48.7164, 21.2611, 300
     
     for amenity in ["restaurant", "cafe"]:
-        print(f"\n🔍 Шукаємо {amenity} в радіусі {radius}м...")
+        print(f"\n🔍 Searching for {amenity} within {radius}m radius...")
         places = find_places_osm(lat, lon, radius, amenity)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name']}")
-            print(f"   🌐 Координати: ({place['lat']}, {place['lon']})")
-            print(f"   🍽️  Кухня: {place['cuisine']}")
-            print(f"   📝 Опис: {place['description']}")
-            print(f"   🌐 Веб-сайт: {place['website']}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🕒 Години роботи: {place['opening_hours']}")
-            print(f"   🏠 Адреса: {place['address']}")
-            print(f"   🏷️  Всі теги: {list(place['all_tags'].keys())}")
+            print(f"   🌐 Coordinates: ({place['lat']}, {place['lon']})")
+            print(f"   🍽️  Cuisine: {place['cuisine']}")
+            print(f"   📝 Description: {place['description']}")
+            print(f"   🌐 Website: {place['website']}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🕒 Opening hours: {place['opening_hours']}")
+            print(f"   🏠 Address: {place['address']}")
+            print(f"   🏷️  All tags: {list(place['all_tags'].keys())}")
         
         time.sleep(2)
 
@@ -84,7 +84,7 @@ def test_overpass_api():
 # 2. NOMINATIM API (OpenStreetMap Geocoding)
 # ============================================================
 def test_nominatim_api():
-    """Тестування Nominatim API"""
+    """Testing Nominatim API"""
     print("\n" + "="*60)
     print("NOMINATIM API (OSM Geocoding)")
     print("="*60)
@@ -124,27 +124,27 @@ def test_nominatim_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
-    # Тестування
+    # Testing
     lat, lon = 48.7164, 21.2611
     
     for amenity in ["restaurant", "cafe"]:
-        print(f"\n🔍 Шукаємо {amenity}...")
+        print(f"\n🔍 Searching for {amenity}...")
         places = find_places_nominatim(lat, lon, amenity)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name'][:60]}...")
-            print(f"   🌐 Координати: ({place['lat']}, {place['lon']})")
-            print(f"   🍽️  Кухня: {place['cuisine']}")
-            print(f"   🌐 Веб-сайт: {place['website']}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🕒 Години роботи: {place['opening_hours']}")
-            print(f"   🏙️  Місто: {place['city']}, {place['road']}")
-            print(f"   🏷️  Теги: {list(place['all_tags'].keys())[:5]}")
+            print(f"   🌐 Coordinates: ({place['lat']}, {place['lon']})")
+            print(f"   🍽️  Cuisine: {place['cuisine']}")
+            print(f"   🌐 Website: {place['website']}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🕒 Opening hours: {place['opening_hours']}")
+            print(f"   🏙️  City: {place['city']}, {place['road']}")
+            print(f"   🏷️  Tags: {list(place['all_tags'].keys())[:5]}")
         
         time.sleep(1)
 
@@ -153,7 +153,7 @@ def test_nominatim_api():
 # 3. FOURSQUARE API
 # ============================================================
 def test_foursquare_api():
-    """Тестування Foursquare API"""
+    """Testing Foursquare API"""
     print("\n" + "="*60)
     print("FOURSQUARE API")
     print("="*60)
@@ -195,32 +195,32 @@ def test_foursquare_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
-    # Тестування
-    api_key = "YOUR_FOURSQUARE_API_KEY"  # Замініть на ваш ключ
+    # Testing
+    api_key = "YOUR_FOURSQUARE_API_KEY"  # Replace with your key
     lat, lon = 48.7164, 21.2611
     
     if api_key == "YOUR_FOURSQUARE_API_KEY":
-        print("⚠️  Додайте Foursquare API ключ для тестування")
+        print("⚠️  Add Foursquare API key for testing")
         return
     
     for query in ["restaurant", "cafe"]:
-        print(f"\n🔍 Шукаємо {query}...")
+        print(f"\n🔍 Searching for {query}...")
         places = find_places_foursquare(lat, lon, query, api_key)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name']}")
-            print(f"   🌐 Координати: ({place['lat']}, {place['lon']})")
-            print(f"   🏷️  Категорія: {place['category']}")
-            print(f"   ⭐ Рейтинг: {place['rating']}")
-            print(f"   📝 Опис: {place['description']}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🌐 Веб-сайт: {place['website']}")
-            print(f"   🏠 Адреса: {place['address']}, {place['city']}")
+            print(f"   🌐 Coordinates: ({place['lat']}, {place['lon']})")
+            print(f"   🏷️  Category: {place['category']}")
+            print(f"   ⭐ Rating: {place['rating']}")
+            print(f"   📝 Description: {place['description']}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🌐 Website: {place['website']}")
+            print(f"   🏠 Address: {place['address']}, {place['city']}")
         
         time.sleep(1)
 
@@ -229,7 +229,7 @@ def test_foursquare_api():
 # 4. OPENTRIPMAP API
 # ============================================================
 def test_opentripmap_api():
-    """Тестування OpenTripMap API"""
+    """Testing OpenTripMap API"""
     print("\n" + "="*60)
     print("OPENTRIPMAP API")
     print("="*60)
@@ -252,7 +252,7 @@ def test_opentripmap_api():
             for place in data.get("features", []):
                 props = place["properties"]
                 
-                # Отримати детальну інформацію
+                # Get detailed information
                 xid = props.get("xid")
                 details = {}
                 if xid:
@@ -276,27 +276,27 @@ def test_opentripmap_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
-    # Тестування
-    api_key = "YOUR_OPENTRIPMAP_API_KEY"  # Замініть на ваш ключ
+    # Testing
+    api_key = "YOUR_OPENTRIPMAP_API_KEY"  # Replace with your key
     lat, lon, radius = 48.7164, 21.2611, 300
     
     if api_key == "YOUR_OPENTRIPMAP_API_KEY":
-        print("⚠️  Додайте OpenTripMap API ключ для тестування")
+        print("⚠️  Add OpenTripMap API key for testing")
         return
     
-    print(f"\n🔍 Шукаємо туристичні місця в радіусі {radius}м...")
+    print(f"\n🔍 Searching for tourist places within {radius}m radius...")
     places = find_places_opentripmap(lat, lon, radius, api_key)
-    print(f"✅ Знайдено: {len(places)} місць")
+    print(f"✅ Found: {len(places)} places")
     
     if places:
         for i, place in enumerate(places[:3], 1):
             print(f"\n   {i}. 📍 {place['name']}")
-            print(f"      🏷️  Види: {place['kinds']}")
-            print(f"      ⭐ Рейтинг: {place['rate']}")
-            print(f"      📝 Опис: {place['description'][:100]}...")
+            print(f"      🏷️  Kinds: {place['kinds']}")
+            print(f"      ⭐ Rating: {place['rate']}")
+            print(f"      📝 Description: {place['description'][:100]}...")
             print(f"      🌐 Wikipedia: {place['wikipedia']}")
 
 
@@ -304,7 +304,7 @@ def test_opentripmap_api():
 # 5. HERE API
 # ============================================================
 def test_here_api():
-    """Тестування HERE API"""
+    """Testing HERE API"""
     print("\n" + "="*60)
     print("HERE API")
     print("="*60)
@@ -342,38 +342,38 @@ def test_here_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
-    # Тестування
-    api_key = "YOUR_HERE_API_KEY"  # Замініть на ваш ключ
+    # Testing
+    api_key = "YOUR_HERE_API_KEY"  # Replace with your key
     lat, lon = 48.7164, 21.2611
     
     if api_key == "YOUR_HERE_API_KEY":
-        print("⚠️  Додайте HERE API ключ для тестування")
+        print("⚠️  Add HERE API key for testing")
         return
     
     for category in ["100-1000-0000", "200-2000-0000"]:  # restaurant, cafe
-        print(f"\n🔍 Шукаємо категорію {category}...")
+        print(f"\n🔍 Searching for category {category}...")
         places = find_places_here(lat, lon, category, api_key)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name']}")
-            print(f"   🏷️  Категорія: {place['category']}")
-            print(f"   🏠 Адреса: {place['address']}")
-            print(f"   🏙️  Місто: {place['city']}, {place['postal_code']}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🌐 Веб-сайт: {place['website']}")
-            print(f"   🕒 Години роботи: {place['opening_hours']}")
+            print(f"   🏷️  Category: {place['category']}")
+            print(f"   🏠 Address: {place['address']}")
+            print(f"   🏙️  City: {place['city']}, {place['postal_code']}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🌐 Website: {place['website']}")
+            print(f"   🕒 Opening hours: {place['opening_hours']}")
 
 
 # ============================================================
 # 6. YELP FUSION API
 # ============================================================
 def test_yelp_api():
-    """Тестування Yelp Fusion API"""
+    """Testing Yelp Fusion API"""
     print("\n" + "="*60)
     print("YELP FUSION API")
     print("="*60)
@@ -413,31 +413,31 @@ def test_yelp_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
-    # Тестування
-    api_key = "YOUR_YELP_API_KEY"  # Замініть на ваш ключ
+    # Testing
+    api_key = "YOUR_YELP_API_KEY"  # Replace with your key
     lat, lon = 48.7164, 21.2611
     
     if api_key == "YOUR_YELP_API_KEY":
-        print("⚠️  Додайте Yelp API ключ для тестування")
+        print("⚠️  Add Yelp API key for testing")
         return
     
     for term in ["restaurant", "cafe"]:
-        print(f"\n🔍 Шукаємо {term}...")
+        print(f"\n🔍 Searching for {term}...")
         places = find_places_yelp(lat, lon, term, api_key)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name']}")
-            print(f"   ⭐ Рейтинг: {place['rating']} ({place['review_count']} відгуків)")
-            print(f"   💰 Ціна: {place['price']}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🏷️  Категорії: {', '.join(place['categories'])}")
-            print(f"   🏠 Адреса: {place['address']}, {place['city']}")
-            print(f"   🛒 Транзакції: {', '.join(place['transactions']) if place['transactions'] else 'N/A'}")
+            print(f"   ⭐ Rating: {place['rating']} ({place['review_count']} reviews)")
+            print(f"   💰 Price: {place['price']}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🏷️  Categories: {', '.join(place['categories'])}")
+            print(f"   🏠 Address: {place['address']}, {place['city']}")
+            print(f"   🛒 Transactions: {', '.join(place['transactions']) if place['transactions'] else 'N/A'}")
             print(f"   🌐 URL: {place['url']}")
         
         time.sleep(1)
@@ -447,7 +447,7 @@ def test_yelp_api():
 # 7. GOOGLE PLACES API
 # ============================================================
 def test_google_places_api():
-    """Тестування Google Places API"""
+    """Testing Google Places API"""
     print("\n" + "="*60)
     print("GOOGLE PLACES API")
     print("="*60)
@@ -466,12 +466,12 @@ def test_google_places_api():
             data = response.json()
             
             if data.get("status") != "OK":
-                print(f"❌ API статус: {data.get('status')}")
+                print(f"❌ API status: {data.get('status')}")
                 return []
             
             places = []
             for place in data.get("results", []):
-                # Отримати детальну інформацію
+                # Get detailed information
                 place_id = place.get("place_id")
                 details = {}
                 if place_id:
@@ -503,51 +503,51 @@ def test_google_places_api():
             
             return places
         except Exception as e:
-            print(f"❌ Помилка: {e}")
+            print(f"❌ Error: {e}")
             return []
     
 
     with open("api_google.txt", "r") as f:
         api_key = f.read().strip()
 
-    # Тестування
+    # Testing
     lat, lon, radius = 48.7164, 21.2611, 300
     
     if api_key == "YOUR_GOOGLE_PLACES_API_KEY":
-        print("⚠️  Додайте Google Places API ключ для тестування")
+        print("⚠️  Add Google Places API key for testing")
         return
     
     for place_type in ["restaurant", "cafe"]:
-        print(f"\n🔍 Шукаємо {place_type}...")
+        print(f"\n🔍 Searching for {place_type}...")
         places = find_places_google(lat, lon, radius, place_type, api_key)
-        print(f"✅ Знайдено: {len(places)} місць")
+        print(f"✅ Found: {len(places)} places")
         
         if places:
             place = places[0]
             print(f"\n   📍 {place['name']}")
-            print(f"   ⭐ Рейтинг: {place['rating']} ({place['user_ratings_total']} відгуків)")
-            print(f"   💰 Рівень цін: {place['price_level']}")
-            print(f"   🏠 Адреса: {place['address']}")
-            print(f"   🏷️  Типи: {', '.join(place['types'][:3])}")
-            print(f"   📞 Телефон: {place['phone']}")
-            print(f"   🌐 Веб-сайт: {place['website']}")
+            print(f"   ⭐ Rating: {place['rating']} ({place['user_ratings_total']} reviews)")
+            print(f"   💰 Price level: {place['price_level']}")
+            print(f"   🏠 Address: {place['address']}")
+            print(f"   🏷️  Types: {', '.join(place['types'][:3])}")
+            print(f"   📞 Phone: {place['phone']}")
+            print(f"   🌐 Website: {place['website']}")
             if place['opening_hours'] != "N/A":
-                print(f"   🕒 Години роботи: {place['opening_hours'][0] if isinstance(place['opening_hours'], list) else 'N/A'}")
+                print(f"   🕒 Opening hours: {place['opening_hours'][0] if isinstance(place['opening_hours'], list) else 'N/A'}")
             if place['reviews']:
-                print(f"   💬 Відгук: {place['reviews'][0]}...")
+                print(f"   💬 Review: {place['reviews'][0]}...")
         
         time.sleep(1)
 
 
 # ============================================================
-# ГОЛОВНА ФУНКЦІЯ
+# MAIN FUNCTION
 # ============================================================
 def main():
     print("\n" + "🌍 "*20)
-    print("ТЕСТУВАННЯ ВСІХ API ДЛЯ ПОШУКУ МІСЦЬ")
+    print("TESTING ALL PLACE SEARCH APIs")
     print("🌍 "*20)
     
-    # Запуск тестів
+    # Run tests
     test_overpass_api()
     test_nominatim_api()
     test_foursquare_api()
@@ -557,7 +557,7 @@ def main():
     test_google_places_api()
     
     print("\n" + "="*60)
-    print("✅ ТЕСТУВАННЯ ЗАВЕРШЕНО")
+    print("✅ TESTING COMPLETED")
     print("="*60)
 
 
