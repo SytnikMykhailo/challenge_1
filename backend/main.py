@@ -133,6 +133,223 @@ Select the 5 most relevant image indices for the context. If less than 5 are rel
         }
 
 
+@app.get("/search-images-by-name")
+def search_images_by_name(
+    place_name: str = Query(..., description="Name of the place"),
+    location: str = Query(None, description="City or location"),
+    max_results: int = Query(5, description="Maximum number of images"),
+    use_mock: bool = Query(False, description="Use mock data for testing")
+):
+    """
+    Searches for images by place name using Google Custom Search API
+    """
+    # Mock data for testing
+    if use_mock:
+        return {
+            "status": "success",
+            "source": "mock_data",
+            "place_name": place_name,
+            "location": location,
+            "search_query": f"{place_name} {location or ''}",
+            "total_results": 3,
+            "images": [
+                {
+                    "url": f"https://via.placeholder.com/800x600/4A90E2/FFFFFF?text={place_name.replace(' ', '+')}",
+                    "thumbnail": f"https://via.placeholder.com/200x150/4A90E2/FFFFFF?text={place_name.replace(' ', '+')}",
+                    "title": f"{place_name} - Main Photo",
+                    "source": "placeholder.com",
+                    "width": 800,
+                    "height": 600
+                },
+                {
+                    "url": f"https://via.placeholder.com/800x600/E24A4A/FFFFFF?text={place_name.replace(' ', '+')}+2",
+                    "thumbnail": f"https://via.placeholder.com/200x150/E24A4A/FFFFFF?text={place_name.replace(' ', '+')}+2",
+                    "title": f"{place_name} - Front View",
+                    "source": "placeholder.com",
+                    "width": 800,
+                    "height": 600
+                },
+                {
+                    "url": f"https://via.placeholder.com/800x600/4AE290/FFFFFF?text={place_name.replace(' ', '+')}+3",
+                    "thumbnail": f"https://via.placeholder.com/200x150/4AE290/FFFFFF?text={place_name.replace(' ', '+')}+3",
+                    "title": f"{place_name} - Detail View",
+                    "source": "placeholder.com",
+                    "width": 800,
+                    "height": 600
+                }
+            ]
+        }
+    
+    try:
+        # Read Google API keys
+        with open("api_google.txt", "r") as f:
+            google_api_key = f.read().strip()
+        
+        with open("google_cx.txt", "r") as f:
+            google_cx = f.read().strip()
+        
+        # Build search query
+        search_query = place_name
+        if location:
+            search_query += f" {location}"
+        
+        # Google Custom Search API
+        search_url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": google_api_key,
+            "cx": google_cx,
+            "q": search_query,
+            "searchType": "image",
+            "num": min(max_results, 10),
+            "safe": "active",
+            "imgSize": "large"
+        }
+        
+        print(f"🔍 Searching Google for: {search_query}")
+        print(f"   API Key (first 10 chars): {google_api_key[:10]}...")
+        print(f"   CX (first 15 chars): {google_cx[:15]}...")
+        
+        response = requests.get(search_url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            # Get detailed error message
+            error_data = {}
+            try:
+                error_data = response.json()
+            except:
+                error_data = {"raw_response": response.text}
+            
+            return {
+                "status": "error",
+                "message": f"Google API error: {response.status_code}",
+                "error_details": error_data,
+                "api_key_prefix": google_api_key[:10] + "...",
+                "cx_prefix": google_cx[:15] + "...",
+                "search_query": search_query,
+                "suggestion": "Check if API keys are correct and Custom Search API is enabled",
+                "fallback": "Add ?use_mock=true to use mock data for testing"
+            }
+        
+        data = response.json()
+        
+        # Check if there are results
+        if not data.get("items"):
+            return {
+                "status": "success",
+                "place_name": place_name,
+                "location": location,
+                "search_query": search_query,
+                "total_results": 0,
+                "images": [],
+                "message": "No images found for this query"
+            }
+        
+        # Extract image URLs
+        images = []
+        for item in data.get("items", []):
+            images.append({
+                "url": item.get("link"),
+                "thumbnail": item.get("image", {}).get("thumbnailLink"),
+                "title": item.get("title"),
+                "source": item.get("displayLink"),
+                "width": item.get("image", {}).get("width"),
+                "height": item.get("image", {}).get("height")
+            })
+        
+        return {
+            "status": "success",
+            "place_name": place_name,
+            "location": location,
+            "search_query": search_query,
+            "total_results": len(images),
+            "images": images
+        }
+    
+    except FileNotFoundError as e:
+        return {
+            "status": "error",
+            "message": "API key files not found. Create api_google.txt and google_cx.txt",
+            "missing_file": str(e),
+            "fallback": "Add ?use_mock=true to use mock data for testing"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error searching images: {str(e)}",
+            "fallback": "Add ?use_mock=true to use mock data for testing"
+        }
+
+@app.get("/get-place-images")
+def get_place_images(
+    place_name: str = Query(None, description="Name of the place"),
+    location: str = Query(None, description="City or location"),
+    website: str = Query(None, description="Website URL (if available)"),
+    context: str = Query("main photo", description="Context for filtering"),
+    use_mock: bool = Query(False, description="Use mock data for testing")
+):
+    """
+    Universal endpoint: gets images from website OR Google search
+    Use when you have either website OR place name + location
+    """
+    # Strategy 1: If website is provided, scrape it
+    if website:
+        print(f"🌐 Strategy: Scraping website {website}")
+        try:
+            result = filter_images_by_ai(
+                website=website,
+                context=context,
+                max_pages=2,
+                max_images=15
+            )
+            
+            if result.get("status") == "success" and result.get("filtered_images"):
+                return {
+                    "status": "success",
+                    "source": "website",
+                    "place_name": place_name or "Unknown",
+                    "website": website,
+                    "images": result.get("filtered_images", [])
+                }
+        except Exception as e:
+            print(f"⚠️ Website scraping failed: {e}")
+    
+    # Strategy 2: Search by name using Google
+    if place_name:
+        print(f"🔍 Strategy: Google search for '{place_name}'")
+        result = search_images_by_name(
+            place_name=place_name,
+            location=location,
+            max_results=5,
+            use_mock=use_mock
+        )
+        
+        if result.get("status") == "success":
+            return {
+                "status": "success",
+                "source": result.get("source", "google_search"),
+                "place_name": place_name,
+                "location": location,
+                "images": result.get("images", [])
+            }
+        else:
+            # Return error from search_images_by_name
+            return result
+    
+    # Strategy 3: No valid input
+    return {
+        "status": "error",
+        "message": "Please provide either 'website' OR 'place_name' (+ optional 'location')",
+        "received_params": {
+            "place_name": place_name,
+            "location": location,
+            "website": website
+        },
+        "example_usage": {
+            "with_website": "/get-place-images?website=https://example.com&context=bar",
+            "with_name": "/get-place-images?place_name=Singing Fountain&location=Košice",
+            "with_mock": "/get-place-images?place_name=St. Elisabeth Cathedral&location=Košice&use_mock=true"
+        }
+    }
 
 @app.get("/")
 def read_root():
