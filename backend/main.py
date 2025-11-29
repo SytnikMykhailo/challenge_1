@@ -23,17 +23,17 @@ settings = {}
 
 
 @app.get("/filter-images")
-def filter_images_by_context(
+def filter_images_by_ai(
     website: str = Query(..., description="Website URL"),
-    context: str = Query(..., description="What are you looking for? (e.g., 'bar atmosphere', 'food', 'interior')"),
+    context: str = Query(..., description="What are you looking for?"),
     max_pages: int = Query(3, description="Maximum pages to scrape"),
-    max_images: int = Query(10, description="Maximum images to analyze")
+    max_images: int = Query(20, description="Maximum images to collect")
 ):
     """
-    Scrapes images from a website and filters them by context using GPT-4 Vision
+    Scrapes images and uses GPT to select the best image based on filenames
     """
-    # 1. First, get all images
-    scrape_result = scrape_website_images(website, max_pages, max_images * 2)
+    # 1. Get all images
+    scrape_result = scrape_website_images(website, max_pages, max_images)
     
     if scrape_result.get("status") != "success":
         return scrape_result
@@ -46,155 +46,93 @@ def filter_images_by_context(
             "message": "No images found on the website"
         }
     
-    # 2. Filter images using GPT-4 Vision
-    filtered_images = []
+    # 2. Create list of image filenames for GPT
+    image_list = []
+    for i, img_url in enumerate(all_images):
+        filename = img_url.split('/')[-1]
+        image_list.append(f"{i}: {filename} ({img_url})")
     
-    for img_url in all_images[:max_images]:
-        try:
-            # Request to GPT-4 Vision
-            response = openai.chat.completions.create(
-                model="gpt-4o-mini",  # Using gpt-4o-mini (cheaper)
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": f"""Analyze this image and determine if it matches the following context: "{context}".
-
-Answer with a JSON object:
-{{
-  "matches": true or false,
-  "confidence": 0.0 to 1.0,
-  "description": "brief description of what you see",
-  "reason": "why it matches or doesn't match"
-}}
-
-Only return JSON, nothing else."""
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": img_url
-                                }
-                            }
-                        ]
-                    }
-                ],
-                max_tokens=300
-            )
-            
-            # Parse response
-            gpt_response = response.choices[0].message.content
-            analysis = json.loads(gpt_response)
-            
-            # If image matches the context
-            if analysis.get("matches") and analysis.get("confidence", 0) > 0.6:
-                filtered_images.append({
-                    "url": img_url,
-                    "confidence": analysis.get("confidence"),
-                    "description": analysis.get("description"),
-                    "reason": analysis.get("reason")
-                })
-            
-            print(f"✅ Analyzed: {img_url[:50]}... - Match: {analysis.get('matches')}")
-        
-        except Exception as e:
-            print(f"❌ Analysis error {img_url[:50]}...: {e}")
-            continue
+    images_text = "\n".join(image_list[:30])  # Limit to 30 images
     
-    # Sort by confidence
-    filtered_images.sort(key=lambda x: x["confidence"], reverse=True)
-    
-    return {
-        "status": "success",
-        "website": website,
-        "context": context,
-        "total_images_analyzed": len(all_images[:max_images]),
-        "matched_images": len(filtered_images),
-        "filtered_images": filtered_images
-    }
-
-
-@app.get("/smart-search")
-def smart_search_with_images(
-    request: str = Query(..., description="Your request (e.g., 'Find a bar with cozy atmosphere in Košice')"),
-    lat: float = Query(48.7164, description="Latitude"),
-    lon: float = Query(21.2611, description="Longitude"),
-    radius: int = Query(500, description="Search radius in meters")
-):
-    """
-    Smart search: analyzes request, finds places and filters photos
-    """
-    # 1. Analyze request through /request
-    request_result = process_request(request)
-    
-    if request_result.get("status") != "success":
-        return request_result
-    
-    parsed_data = request_result.get("parsed_data", {})
-    place_types = parsed_data.get("place_types", ["restaurant"])
-    
-    # 2. Find places through OSM
-    places = find_places_osm(lat, lon, radius, place_types[0] if place_types else "restaurant")
-    
-    # 3. For each place get and filter photos
-    results = []
-    for place in places[:3]:  # First 3 places
-        website = place.get("tags", {}).get("website")
-        
-        if website:
-            # Determine context from request
-            context = f"{parsed_data.get('cuisine', '')} food and {parsed_data.get('activity_type', '')} atmosphere"
-            
-            # Get filtered photos
-            filtered = filter_images_by_context(website, context, max_pages=2, max_images=5)
-            
-            results.append({
-                "place_name": place.get("name"),
-                "website": website,
-                "coordinates": {"lat": place.get("lat"), "lon": place.get("lon")},
-                "filtered_images": filtered.get("filtered_images", [])
-            })
-    
-    return {
-        "status": "success",
-        "original_request": request,
-        "parsed_data": parsed_data,
-        "results": results
-    }
-
-
-def find_places_osm(lat: float, lon: float, radius: int, amenity: str):
-    """Search for places through OpenStreetMap"""
-    url = "https://overpass-api.de/api/interpreter"
-    query = f"""
-    [out:json];
-    node(around:{radius},{lat},{lon})[amenity={amenity}];
-    out body;
-    """
-    
+    # 3. Ask GPT to select best images
     try:
-        response = requests.get(url, params={"data": query}, timeout=30)
-        if response.status_code != 200:
-            return []
+        selection_response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You analyze image filenames and URLs to find the most relevant images.
+Select the top 5 most relevant image indices based on their filenames.
+Return ONLY a JSON array of indices, e.g., [0, 3, 7, 12, 15]"""
+                },
+                {
+                    "role": "user",
+                    "content": f"""Context: {context}
+
+Available images:
+{images_text}
+
+Select the 5 most relevant image indices for the context. If less than 5 are relevant, select fewer. Return JSON array."""
+                }
+            ],
+            temperature=0.3,
+            max_tokens=100
+        )
         
-        data = response.json()
-        places = []
+        selected_indices = json.loads(selection_response.choices[0].message.content.strip())
+        print(f"🤖 GPT selected indices: {selected_indices}")
         
-        for element in data.get("elements", []):
-            tags = element.get("tags", {})
-            places.append({
-                "name": tags.get("name", "Unknown"),
-                "lat": element["lat"],
-                "lon": element["lon"],
-                "tags": tags
+        # Get selected images
+        filtered_images = []
+        for idx in selected_indices:
+            if 0 <= idx < len(all_images):
+                filtered_images.append({
+                    "url": all_images[idx],
+                    "filename": all_images[idx].split('/')[-1],
+                    "index": idx,
+                    "confidence": 1.0 - (selected_indices.index(idx) * 0.15),  # Decrease by rank
+                    "description": f"Selected by AI as rank {selected_indices.index(idx) + 1}"
+                })
+        
+        # Fallback: if no images selected, return first one
+        if not filtered_images:
+            filtered_images.append({
+                "url": all_images[0],
+                "filename": all_images[0].split('/')[-1],
+                "index": 0,
+                "confidence": 0.1,
+                "description": "Fallback: first image (AI found no good matches)"
             })
         
-        return places
+        return {
+            "status": "success",
+            "website": website,
+            "context": context,
+            "selection_method": "AI-powered",
+            "total_images_analyzed": len(all_images),
+            "matched_images": len(filtered_images),
+            "filtered_images": filtered_images
+        }
+        
     except Exception as e:
-        print(f"❌ OSM error: {e}")
-        return []
+        print(f"❌ Error with AI selection: {e}")
+        # Fallback: return first image
+        return {
+            "status": "success",
+            "website": website,
+            "context": context,
+            "selection_method": "fallback",
+            "total_images_analyzed": len(all_images),
+            "matched_images": 1,
+            "filtered_images": [{
+                "url": all_images[0],
+                "filename": all_images[0].split('/')[-1],
+                "confidence": 0.1,
+                "description": "Fallback: first image"
+            }]
+        }
+
+
 
 @app.get("/")
 def read_root():
