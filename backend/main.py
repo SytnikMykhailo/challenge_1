@@ -852,7 +852,7 @@ def filter_images_by_ai(
             messages=[
                 {
                     "role": "system",
-                    "content": f"""You are an expert at analyzing image URLs to determine their relevance for: "{context}"
+                    content: f"""You are an expert at analyzing image URLs to determine their relevance for: "{context}"
 
 Rate each image from 0.0 to 1.0 based on URL analysis.
 
@@ -1245,6 +1245,126 @@ def get_place_images(
         }
     }
 
+def ai_generate_api_tags(request: str, activity_type: str, place_types: List[str], cuisine: str = None) -> Dict[str, List[str]]:
+    """
+    Uses GPT to generate API-compatible tags for Google Places and OpenStreetMap
+    
+    Returns:
+    {
+        "google_types": [...],
+        "osm_tags": [...]
+    }
+    """
+    try:
+        print(f"\n🤖 Generating API tags with AI...")
+        
+        prompt = f"""You are an expert in Google Places API and OpenStreetMap tagging systems.
+
+User wants: "{request}"
+Activity type: {activity_type}
+Place types: {', '.join(place_types)}
+Cuisine: {cuisine or "N/A"}
+
+Your task: Generate API-compatible search tags for BOTH systems.
+
+**GOOGLE PLACES API TYPES** (choose 3-5 most relevant):
+Available types: tourist_attraction, museum, art_gallery, church, synagogue, hindu_temple, mosque, park, point_of_interest, restaurant, cafe, bar, meal_delivery, meal_takeaway, night_club, movie_theater, bowling_alley, casino, amusement_park, gym, stadium, spa, shopping_mall, clothing_store, book_store, electronics_store, store, lodging, hotel, campground, rv_park, library
+
+For restaurants, use specific cuisine types: italian_restaurant, chinese_restaurant, japanese_restaurant, indian_restaurant, mexican_restaurant, french_restaurant, pizza_restaurant
+
+**OPENSTREETMAP TAGS** (choose 3-5 most relevant):
+Format: "key=value"
+
+Common tags:
+- Tourism: tourism=museum, tourism=attraction, tourism=artwork, tourism=viewpoint, tourism=gallery, tourism=hotel, tourism=hostel
+- Historic: historic=monument, historic=castle, historic=memorial, historic=ruins
+- Amenity: amenity=restaurant, amenity=cafe, amenity=bar, amenity=pub, amenity=fast_food, amenity=cinema, amenity=theatre, amenity=nightclub, amenity=library, amenity=place_of_worship
+- Leisure: leisure=park, leisure=garden, leisure=sports_centre, leisure=fitness_centre, leisure=stadium, leisure=swimming_pool
+- Shop: shop=mall, shop=supermarket, shop=clothes, shop=books, shop=electronics
+- Natural: natural=wood, natural=beach
+
+For cuisine, add: cuisine=italian, cuisine=chinese, cuisine=japanese, cuisine=indian, cuisine=mexican, cuisine=french, cuisine=thai, cuisine=pizza
+
+**IMPORTANT RULES:**
+1. Choose tags that will actually find places (not too specific, not too generic)
+2. For sightseeing: include tourist_attraction, museum, historic sites, viewpoints
+3. For dining: include restaurant/cafe AND cuisine type if specified
+4. For entertainment: include nightclub, cinema, theatre
+5. OSM tags must be exact format "key=value"
+6. Return 3-5 tags per API (more = better coverage)
+
+Return ONLY this JSON format (no explanation):
+{{
+  "google_types": ["type1", "type2", "type3"],
+  "osm_tags": ["key=value1", "key=value2", "key=value3"]
+}}"""
+
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert in Google Places API and OpenStreetMap. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2,  # Low temperature for consistent results
+            max_tokens=300
+        )
+        
+        gpt_response = response.choices[0].message.content.strip()
+        
+        # Parse JSON
+        api_tags = json.loads(gpt_response)
+        
+        # Validate structure
+        if "google_types" not in api_tags or "osm_tags" not in api_tags:
+            raise ValueError("Invalid JSON structure from GPT")
+        
+        # Validate OSM tags format
+        for tag in api_tags["osm_tags"]:
+            if "=" not in tag:
+                print(f"⚠️ Invalid OSM tag format: {tag}")
+        
+        print(f"✅ Generated tags:")
+        print(f"   Google: {api_tags['google_types']}")
+        print(f"   OSM: {api_tags['osm_tags']}")
+        
+        return api_tags
+    
+    except json.JSONDecodeError as e:
+        print(f"❌ Failed to parse GPT response: {e}")
+        print(f"   Raw response: {gpt_response}")
+        
+        # Fallback to basic tags
+        return {
+            "google_types": ["point_of_interest", "establishment"],
+            "osm_tags": ["tourism=attraction"]
+        }
+    
+    except Exception as e:
+        print(f"❌ AI tag generation failed: {e}")
+        
+        # Fallback based on activity type
+        fallback_map = {
+            "sightseeing": {
+                "google_types": ["tourist_attraction", "museum", "point_of_interest"],
+                "osm_tags": ["tourism=attraction", "tourism=museum", "historic=monument"]
+            },
+            "dining": {
+                "google_types": ["restaurant", "cafe", "bar"],
+                "osm_tags": ["amenity=restaurant", "amenity=cafe", "amenity=bar"]
+            },
+            "entertainment": {
+                "google_types": ["night_club", "movie_theater", "casino"],
+                "osm_tags": ["amenity=cinema", "amenity=nightclub", "amenity=theatre"]
+            }
+        }
+        
+        return fallback_map.get(activity_type, {
+            "google_types": ["point_of_interest"],
+            "osm_tags": ["tourism=attraction"]
+        })
+
+
+# Update /request endpoint to use AI generation:
 @app.get("/request")
 def process_request(request: str = Query(..., description="Your request")):
     """
@@ -1253,109 +1373,300 @@ def process_request(request: str = Query(..., description="Your request")):
     """
     global tags_for_places, settings
     
-    # Use gpt-3.5-turbo instead of gpt-4 (faster and cheaper)
     response = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {
                 "role": "system", 
-                "content": """You are an AI assistant that helps with tourism and activities.
-Your task is to analyze the user's request and extract structured information in JSON format.
+                "content": """You are an AI assistant that extracts place types from user requests.
+Your task is to analyze the user's request and extract ONLY the types of places mentioned.
 
 Output JSON structure:
 {
-  "activity_type": "string (e.g., dining, sightseeing, entertainment, sports, shopping)",
-  "place_types": ["array of place types (e.g., restaurant, cafe, museum, park)"],
-  "cuisine": "string or null (if restaurant/cafe)",
-  "preferences": {
-    "budget": "low/medium/high or null",
-    "rating_min": number or null,
-    "distance_max": number in meters or null,
-    "wheelchair_accessible": boolean or null,
-    "outdoor_seating": boolean or null,
-    "dog_friendly": boolean or null,
-    "delivery": boolean or null,
-    "takeaway": boolean or null
-  },
-  "location": {
-    "city": "string or null",
-    "coordinates": {"lat": number, "lon": number} or null
-  },
-  "time_constraints": {
-    "date": "string or null",
-    "time": "string or null"
-  },
-  "additional_notes": "string or null"
+  "place_types": ["array of specific place types mentioned (e.g., restaurant, cafe, museum, park, hotel)"],
+  "location": "city or area mentioned or null"
 }
+
+Examples:
+- "Find me a restaurant in Berlin" -> {"place_types": ["restaurant"], "location": "Berlin"}
+- "I want to visit museums and cafes" -> {"place_types": ["museum", "cafe"], "location": null}
+- "Show me parks" -> {"place_types": ["park"], "location": null}
 
 Only return valid JSON, nothing else."""
             },
             {"role": "user", "content": request}
         ],
         temperature=0.3,
-        max_tokens=500
+        max_tokens=200
     )
     
-    # Get response from GPT
     gpt_response = response.choices[0].message.content
     
-    try:  # ← FIX: Use colon instead of {
-        # Parse JSON response
+    try:
         parsed_data = json.loads(gpt_response)
-        
-        # Update global variables
         tags_for_places = parsed_data.get("place_types", [])
-        settings = {
-            "activity_type": parsed_data.get("activity_type"),
-            "cuisine": parsed_data.get("cuisine"),
-            "preferences": parsed_data.get("preferences", {}),
-            "location": parsed_data.get("location", {}),
-            "time_constraints": parsed_data.get("time_constraints", {}),
-            "additional_notes": parsed_data.get("additional_notes")
-        }
         
-        # Return structured data
         return {
             "status": "success",
             "original_request": request,
-            "parsed_data": parsed_data,
-            "tags_for_places": tags_for_places,
-            "settings": settings,
-            "next_step": "Use /search endpoint to find places based on these parameters"
+            "place_types": tags_for_places,
+            "location": parsed_data.get("location"),
+            "next_step": "Use /search-places endpoint to find places"
         }
         
-    except json.JSONDecodeError as e:  # ← FIX: Use colon
-        # If GPT didn't return valid JSON
+    except json.JSONDecodeError as e:
         return {
             "status": "error",
-            "message": "Failed to parse GPT response",
+            "message": "Failed to parse response",
             "raw_response": gpt_response,
             "error": str(e)
         }
-    except Exception as e:  # ← FIX: Use colon
+    except Exception as e:
         return {
             "status": "error",
-            "message": "An error occurred while processing the request",
+            "message": "An error occurred",
             "error": str(e)
         }
 
 
-@app.get("/answer")
-def get_answer(question: str = Query(..., description="Your question")):
+@app.get("/search-places")
+def search_places(
+    place_type: str = Query(..., description="Type of place (restaurant, cafe, museum, etc.)"),
+    location: str = Query(..., description="City or address"),
+    radius: int = Query(1000, description="Search radius in meters")
+):
     """
-    Answers general questions about daily life
+    Search for places using both Google Places API and Overpass API (OpenStreetMap)
     """
-    response = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are an AI assistant that helps with questions about daily routines and everyday life. Do not answer questions outside this topic; politely refuse to respond to unrelated questions."},
-            {"role": "user", "content": question}
-        ],
-        temperature=0.5,
-        max_tokens=300
-    )
-    answer = response.choices[0].message.content
-    return {"answer": answer}
+    try:
+        # Read API keys
+        with open("api_google.txt", "r") as f:
+            google_api_key = f.read().strip()
+        
+        # 1. Geocode location
+        geocode_url = f"https://nominatim.openstreetmap.org/search?format=json&q={location}&limit=1"
+        geocode_response = requests.get(geocode_url, headers={"User-Agent": "PlaceSearchApp/1.0"})
+        geocode_data = geocode_response.json()
+        
+        if not geocode_data:
+            return {"status": "error", "message": f"Location '{location}' not found"}
+        
+        lat = float(geocode_data[0]["lat"])
+        lon = float(geocode_data[0]["lon"])
+        
+        # 2. Search using Google Places API
+        google_places = search_google_places(lat, lon, place_type, radius, google_api_key)
+        
+        # 3. Search using Overpass API (OpenStreetMap)
+        osm_places = search_overpass_api(lat, lon, place_type, radius)
+        
+        # 4. Combine results
+        all_places = {
+            "status": "success",
+            "location": {
+                "name": geocode_data[0]["display_name"],
+                "lat": lat,
+                "lon": lon
+            },
+            "search_parameters": {
+                "place_type": place_type,
+                "radius": radius
+            },
+            "google_places": google_places,
+            "osm_places": osm_places,
+            "total_results": {
+                "google": len(google_places),
+                "osm": len(osm_places),
+                "combined": len(google_places) + len(osm_places)
+            }
+        }
+        
+        return all_places
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+def search_google_places(lat: float, lon: float, place_type: str, radius: int, api_key: str):
+    """Search places using Google Places API with ALL available data"""
+    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    params = {
+        "location": f"{lat},{lon}",
+        "radius": radius,
+        "type": place_type,
+        "key": api_key
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        data = response.json()
+        
+        if data.get("status") not in ["OK", "ZERO_RESULTS"]:
+            print(f"⚠️ Google API status: {data.get('status')}")
+            return []
+        
+        places = []
+        for place in data.get("results", [])[:10]:
+            place_id = place.get("place_id")
+            
+            # Get detailed information
+            details = {}
+            if place_id:
+                detail_url = "https://maps.googleapis.com/maps/api/place/details/json"
+                detail_params = {
+                    "place_id": place_id,
+                    "fields": "name,formatted_address,formatted_phone_number,international_phone_number,website,opening_hours,price_level,rating,user_ratings_total,reviews,types,geometry,photos,business_status,url",
+                    "key": api_key
+                }
+                try:
+                    detail_response = requests.get(detail_url, params=detail_params, timeout=10)
+                    if detail_response.status_code == 200:
+                        details = detail_response.json().get("result", {})
+                except:
+                    pass
+            
+            place_info = {
+                "source": "Google Places",
+                "place_id": place_id,
+                "name": place.get("name", "Unknown"),
+                "coordinates": {
+                    "lat": place["geometry"]["location"]["lat"],
+                    "lon": place["geometry"]["location"]["lng"]
+                },
+                "address": details.get("formatted_address", place.get("vicinity", "N/A")),
+                "rating": place.get("rating", "N/A"),
+                "user_ratings_total": place.get("user_ratings_total", 0),
+                "price_level": place.get("price_level", "N/A"),
+                "types": place.get("types", []),
+                "business_status": place.get("business_status", "N/A"),
+                "phone": details.get("formatted_phone_number", "N/A"),
+                "international_phone": details.get("international_phone_number", "N/A"),
+                "website": details.get("website", "N/A"),
+                "url": details.get("url", "N/A"),
+                "opening_hours": details.get("opening_hours", {}).get("weekday_text", []),
+                "photos": details.get("photos", []),
+                "reviews": [
+                    {
+                        "author": r.get("author_name"),
+                        "rating": r.get("rating"),
+                        "text": r.get("text", "")[:200],
+                        "time": r.get("relative_time_description")
+                    }
+                    for r in details.get("reviews", [])[:3]
+                ]
+            }
+            places.append(place_info)
+        
+        return places
+        
+    except Exception as e:
+        print(f"❌ Google Places API error: {e}")
+        return []
+
+
+def search_overpass_api(lat: float, lon: float, place_type: str, radius: int):
+    """Search places using Overpass API with ALL available OSM data"""
+    
+    type_mapping = {
+        "restaurant": "restaurant",
+        "cafe": "cafe",
+        "bar": "bar",
+        "pub": "pub",
+        "fast_food": "fast_food",
+        "museum": "museum",
+        "gallery": "gallery",
+        "cinema": "cinema",
+        "theatre": "theatre",
+        "nightclub": "nightclub",
+        "park": "park",
+        "hotel": "hotel",
+        "shop": "shop",
+        "gym": "gym",
+        "library": "library"
+    }
+    
+    amenity = type_mapping.get(place_type.lower(), place_type)
+    
+    url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node(around:{radius},{lat},{lon})["amenity"="{amenity}"];
+      way(around:{radius},{lat},{lon})["amenity"="{amenity}"];
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+    
+    try:
+        response = requests.post(url, data=query, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"⚠️ Overpass API status: {response.status_code}")
+            return []
+        
+        data = response.json()
+        places = []
+        
+        for element in data.get("elements", [])[:10]:
+            if element.get("type") not in ["node", "way"]:
+                continue
+                
+            tags = element.get("tags", {})
+            
+            if element.get("type") == "node":
+                element_lat = element.get("lat")
+                element_lon = element.get("lon")
+            else:
+                element_lat = tags.get("lat") or element.get("lat")
+                element_lon = tags.get("lon") or element.get("lon")
+            
+            if not element_lat or not element_lon:
+                continue
+            
+            place_info = {
+                "source": "OpenStreetMap",
+                "osm_id": element.get("id"),
+                "osm_type": element.get("type"),
+                "name": tags.get("name", "Unknown"),
+                "coordinates": {
+                    "lat": element_lat,
+                    "lon": element_lon
+                },
+                "amenity": tags.get("amenity", "N/A"),
+                "cuisine": tags.get("cuisine", "N/A"),
+                "address": f"{tags.get('addr:street', '')} {tags.get('addr:housenumber', '')}".strip() or "N/A",
+                "city": tags.get("addr:city", "N/A"),
+                "postcode": tags.get("addr:postcode", "N/A"),
+                "phone": tags.get("phone") or tags.get("contact:phone", "N/A"),
+                "website": tags.get("website") or tags.get("contact:website", "N/A"),
+                "email": tags.get("email") or tags.get("contact:email", "N/A"),
+                "opening_hours": tags.get("opening_hours", "N/A"),
+                "wheelchair": tags.get("wheelchair", "N/A"),
+                "outdoor_seating": tags.get("outdoor_seating", "N/A"),
+                "delivery": tags.get("delivery", "N/A"),
+                "takeaway": tags.get("takeaway", "N/A"),
+                "smoking": tags.get("smoking", "N/A"),
+                "internet_access": tags.get("internet_access", "N/A"),
+                "wifi": tags.get("internet_access:fee", "N/A"),
+                "rating": "N/A",
+                "description": tags.get("description", "N/A"),
+                "brand": tags.get("brand", "N/A"),
+                "operator": tags.get("operator", "N/A"),
+                "capacity": tags.get("capacity", "N/A"),
+                "all_tags": tags
+            }
+            places.append(place_info)
+        
+        return places
+        
+    except Exception as e:
+        print(f"❌ Overpass API error: {e}")
+        return []
 
 @app.get("/search-places-with-images")
 def search_places_with_images(
@@ -1367,237 +1678,195 @@ def search_places_with_images(
     images_per_place: int = Query(3, description="Max images per place")
 ):
     """
-    🎯 MAIN ENDPOINT: Parse request → Find places → Get images for each place
-    
-    Process:
-    1. Parse user request with GPT (extract activity type, place types, preferences)
-    2. Search for places using places_api
-    3. For each place, scrape images from their website
-    4. Return places with descriptions and images
+    🎯 MAIN ENDPOINT: AI extracts place types → Search with Google & OSM → Get images
     """
     try:
         print(f"\n{'='*60}")
-        print(f"🔍 SMART SEARCH REQUEST")
+        print(f"🔍 SMART SEARCH WITH IMAGES")
         print(f"{'='*60}")
         print(f"Request: {request}")
-        print(f"Location: ({lat}, {lon})")
-        print(f"Radius: {radius}m")
+        print(f"Location: ({lat}, {lon}), Radius: {radius}m")
         
-        # STEP 1: Parse request with GPT
-        print(f"\n📝 STEP 1: Parsing request with GPT...")
+        # Read API keys
+        google_api_key = None
+        try:
+            with open("api_google.txt", "r") as f:
+                google_api_key = f.read().strip()
+        except:
+            print("⚠️ Google API key not found, using only OSM")
+        
+        # STEP 1: Extract place types from user request with AI
+        print(f"\n📝 STEP 1: Extracting place types with AI...")
         
         parse_response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system", 
-                    "content": """You are an AI assistant that helps with tourism and activities.
-Your task is to analyze the user's request and extract structured information in JSON format.
+                    "content": """Extract place types from user request.
 
-Output JSON structure:
+Output JSON:
 {
-  "activity_type": "string (e.g., dining, sightseeing, entertainment, sports, shopping)",
-  "place_types": ["array of place types (e.g., restaurant, cafe, museum, park)"],
-  "cuisine": "string or null (if restaurant/cafe)",
-  "preferences": {
-    "budget": "low/medium/high or null",
-    "rating_min": number or null,
-    "wheelchair_accessible": boolean or null,
-    "outdoor_seating": boolean or null,
-    "dog_friendly": boolean or null
-  },
-  "search_context": "short description for image search (e.g., 'restaurant interior', 'museum exhibits', 'park landscape')"
+  "place_types": ["array of specific place types mentioned (e.g., restaurant, cafe, museum, park, hotel)"],
+  "location": "city or area mentioned or null"
 }
+
+Examples:
+- "Find me a restaurant in Berlin" -> {"place_types": ["restaurant"], "location": "Berlin"}
+- "I want to visit museums and cafes" -> {"place_types": ["museum", "cafe"], "location": null}
+- "Show me parks" -> {"place_types": ["park"], "location": null}
 
 Only return valid JSON, nothing else."""
                 },
                 {"role": "user", "content": request}
             ],
             temperature=0.3,
-            max_tokens=500
+            max_tokens=200
         )
         
-        gpt_response = parse_response.choices[0].message.content
+        gpt_response = parse_response.choices[0].message.content.strip()
         parsed_data = json.loads(gpt_response)
         
-        print(f"✅ Parsed data:")
-        print(f"   Activity: {parsed_data.get('activity_type')}")
-        print(f"   Place types: {parsed_data.get('place_types')}")
-        print(f"   Search context: {parsed_data.get('search_context')}")
-        
-        # STEP 2: Search for places
-        print(f"\n📍 STEP 2: Searching for places...")
-        
         place_types = parsed_data.get("place_types", ["restaurant"])
+        cuisine = parsed_data.get("cuisine")
+        search_context = parsed_data.get("search_context", "interior photos")
+        
+        print(f"✅ Extracted place types: {place_types}")
+        print(f"   Cuisine: {cuisine or 'N/A'}")
+        print(f"   Search context: {search_context}")
+        
+        # STEP 2: Search places with both APIs
+        print(f"\n📍 STEP 2: Searching places...")
+        
         all_places = []
         
-        for place_type in place_types[:3]:  # Max 3 types to avoid long searches
-            print(f"   Searching for: {place_type}")
-            places = search_places(
-                lat=lat,
-                lon=lon,
-                radius=radius,
-                place_type=place_type,
-                limit=limit,
-                use_google=False  # Use only free APIs
-            )
-            all_places.extend(places)
+        # Try each place type
+        for place_type in place_types[:2]:  # Max 2 types to save time
+            print(f"\n   🔍 Searching for: {place_type}")
+            
+            # 2a. Google Places API
+            if google_api_key:
+                print(f"      🌐 Google Places API...")
+                google_places = search_google_places(lat, lon, place_type, radius, google_api_key)
+                print(f"      ✅ Google: Found {len(google_places)} places")
+                all_places.extend(google_places)
+            
+            # 2b. Overpass API (OSM)
+            print(f"      🗺️ OpenStreetMap API...")
+            osm_places = search_overpass_api(lat, lon, place_type, radius)
+            print(f"      ✅ OSM: Found {len(osm_places)} places")
+            all_places.extend(osm_places)
         
-        # Remove duplicates
+        # Remove duplicates by name
         unique_places = []
         seen_names = set()
         
         for place in all_places:
-            if place["name"] not in seen_names:
-                seen_names.add(place["name"])
+            name_lower = place["name"].lower().strip()
+            if name_lower not in seen_names and name_lower != "unknown":
+                seen_names.add(name_lower)
                 unique_places.append(place)
         
-        # Sort by rating
-        def get_rating(place):
+        print(f"\n   ✅ Total: {len(unique_places)} unique places (from {len(all_places)} raw results)")
+        
+        if not unique_places:
+            return {
+                "status": "error",
+                "message": "No places found",
+                "parsed_context": parsed_data,
+                "suggestions": ["Try increasing radius", "Try different search terms"]
+            }
+        
+        # Sort by rating (safe conversion)
+        def safe_get_rating(place):
             rating = place.get("rating", "N/A")
+            if rating == "N/A" or rating is None:
+                return 0.0
             try:
                 return float(rating)
             except:
-                return 0
+                return 0.0
         
-        unique_places.sort(key=get_rating, reverse=True)
+        unique_places.sort(key=safe_get_rating, reverse=True)
         unique_places = unique_places[:limit]
         
-        print(f"✅ Found {len(unique_places)} unique places")
+        # Show top 3
+        print(f"\n   📊 Top places by rating:")
+        for i, place in enumerate(unique_places[:3]):
+            rating = safe_get_rating(place)
+            print(f"      {i+1}. {place['name']} - ⭐ {rating:.1f} ({place.get('source')})")
         
         # STEP 3: Get images for each place
-        print(f"\n🖼️ STEP 3: Getting images for each place...")
+        print(f"\n🖼️ STEP 3: Getting images for {len(unique_places)} places...")
         
-        search_context = parsed_data.get("search_context", "interior photos")
         results = []
         
         for i, place in enumerate(unique_places):
-            print(f"\n   [{i+1}/{len(unique_places)}] Processing: {place['name']}")
+            print(f"\n   [{i+1}/{len(unique_places)}] {place['name']}")
             
             place_result = {
                 "place_info": place,
                 "images": [],
-                "image_search_method": "unknown"
+                "image_search_method": "none"
             }
             
-            # Strategy 1: Try to scrape from website if available
-            if place.get("website") and place["website"] != "N/A":
-                print(f"      🌐 Found website: {place['website']}")
+            # Strategy 1: Scrape from website
+            website = place.get("website")
+            if website and website != "N/A" and website.startswith("http"):
+                print(f"      🌐 Website: {website}")
                 
                 try:
-                    # Use existing scrape function
                     scrape_result = scrape_website_images(
-                        website=place["website"],
-                        max_pages=5,  # Quick search
-                        max_images=20,
+                        website=website,
+                        max_pages=3,
+                        max_images=15,
                         context=search_context,
-                        min_images_per_page=3,
-                        use_ai_scoring=False  # Faster without AI
+                        min_images_per_page=2,
+                        use_ai_scoring=False
                     )
                     
                     if scrape_result.get("status") == "success":
-                        scraped_images = scrape_result.get("images", [])
+                        images = scrape_result.get("images", [])
                         
-                        if scraped_images:
-                            print(f"      ✅ Scraped {len(scraped_images)} images from website")
-                            
-                            # Filter and rate images with GPT
-                            if len(scraped_images) > 0:
-                                # Take top images
-                                top_images = scraped_images[:images_per_place * 2]
-                                
-                                # Rate with GPT
-                                try:
-                                    rating_prompt = f"""Rate these images (0.0-1.0) for context: "{search_context}" at place "{place['name']}"
-
-Images (by index):
-{chr(10).join([f"{idx}: {img}" for idx, img in enumerate(top_images)])}
-
-Return JSON: {{"image_index": score, ...}}
-Only return relevant images (score > 0.5)."""
-
-                                    rating_response = openai.chat.completions.create(
-                                        model="gpt-3.5-turbo",
-                                        messages=[
-                                            {"role": "system", "content": "You rate image relevance. Return only JSON."},
-                                            {"role": "user", "content": rating_prompt}
-                                        ],
-                                        temperature=0.2,
-                                        max_tokens=500
-                                    )
-                                    
-                                    ratings = json.loads(rating_response.choices[0].message.content)
-                                    
-                                    # Select top rated images
-                                    rated_images = []
-                                    for idx_str, score in ratings.items():
-                                        idx = int(idx_str)
-                                        if idx < len(top_images) and score > 0.5:
-                                            rated_images.append({
-                                                "url": top_images[idx],
-                                                "confidence": score,
-                                                "source": "website"
-                                            })
-                                    
-                                    rated_images.sort(key=lambda x: x["confidence"], reverse=True)
-                                    place_result["images"] = rated_images[:images_per_place]
-                                    place_result["image_search_method"] = "website_scraping"
-                                    
-                                    print(f"      ⭐ Selected {len(place_result['images'])} top rated images")
-                                
-                                except Exception as e:
-                                    print(f"      ⚠️ Rating failed: {e}")
-                                    # Fallback: just take first N images
-                                    place_result["images"] = [
-                                        {"url": img, "confidence": 0.7, "source": "website"}
-                                        for img in scraped_images[:images_per_place]
-                                    ]
-                                    place_result["image_search_method"] = "website_scraping_unrated"
-                        
-                except Exception as e:
-                    print(f"      ❌ Website scraping failed: {e}")
-            
-            # Strategy 2: If no website or scraping failed, try Google Image Search
-            if not place_result["images"]:
-                print(f"      🔍 Trying Google Image Search...")
-                
-                try:
-                    search_query = f"{place['name']} {search_context}"
-                    
-                    google_result = get_place_images_from_google(
-                        place_name=place["name"],
-                        location=f"{lat},{lon}",
-                        use_mock=False
-                    )
-                    
-                    if google_result.get("status") == "success":
-                        google_images = google_result.get("images", [])
-                        
-                        if google_images:
+                        if images:
                             place_result["images"] = [
-                                {
-                                    "url": img["url"],
-                                    "confidence": 0.6,
-                                    "source": "google_images",
-                                    "title": img.get("title", "")
-                                }
-                                for img in google_images[:images_per_place]
+                                {"url": img, "confidence": 0.8, "source": "website"}
+                                for img in images[:images_per_place]
                             ]
-                            place_result["image_search_method"] = "google_images"
-                            print(f"      ✅ Found {len(place_result['images'])} images from Google")
+                            place_result["image_search_method"] = "website_scraping"
+                            print(f"      ✅ Scraped {len(place_result['images'])} images")
                 
                 except Exception as e:
-                    print(f"      ❌ Google search failed: {e}")
+                    print(f"      ⚠️ Scraping failed: {e}")
             
-            # Strategy 3: Fallback - generate placeholder
+            # Strategy 2: Use Google Photos (if available from Google Places)
+            if not place_result["images"] and place.get("source") == "Google Places":
+                photos = place.get("photos", [])
+                if photos and google_api_key:
+                    print(f"      📸 Using Google Photos API...")
+                    for photo in photos[:images_per_place]:
+                        photo_reference = photo.get("photo_reference")
+                        if photo_reference:
+                            photo_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference={photo_reference}&key={google_api_key}"
+                            place_result["images"].append({
+                                "url": photo_url,
+                                "confidence": 0.9,
+                                "source": "google_photos"
+                            })
+                    
+                    if place_result["images"]:
+                        place_result["image_search_method"] = "google_photos"
+                        print(f"      ✅ {len(place_result['images'])} Google Photos")
+            
+            # Fallback: Placeholder
             if not place_result["images"]:
-                print(f"      ⚠️ No images found, using placeholder")
                 place_result["images"] = [{
                     "url": f"https://via.placeholder.com/400x300?text={place['name'].replace(' ', '+')}",
                     "confidence": 0.1,
                     "source": "placeholder"
                 }]
                 place_result["image_search_method"] = "placeholder"
+                print(f"      ⚠️ Using placeholder")
             
             results.append(place_result)
         
@@ -1613,18 +1882,14 @@ Only return relevant images (score > 0.5)."""
             "location": {"lat": lat, "lon": lon, "radius": radius},
             "total_places": len(results),
             "places": results,
-            "optimization_notes": [
-                "Used free APIs (OpenStreetMap)",
-                "Scraped images from place websites when available",
-                "Fallback to Google Image Search if needed",
-                "AI-rated images for relevance"
-            ]
+            "api_sources": ["Google Places API", "OpenStreetMap (Overpass)"],
+            "image_sources": ["Website scraping", "Google Photos", "Placeholder"]
         }
     
     except json.JSONDecodeError as e:
         return {
             "status": "error",
-            "message": "Failed to parse GPT response",
+            "message": "Failed to parse AI response",
             "error": str(e)
         }
     except Exception as e:
@@ -1635,4 +1900,183 @@ Only return relevant images (score > 0.5)."""
             "message": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+def search_google_places(lat: float, lon: float, place_type: str, radius: int, api_key: str):
+    """Search places using Google Places API with ALL available data"""
+    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    params = {
+        "location": f"{lat},{lon}",
+        "radius": radius,
+        "type": place_type,
+        "key": api_key
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=30)
+        data = response.json()
+        
+        if data.get("status") not in ["OK", "ZERO_RESULTS"]:
+            print(f"⚠️ Google API status: {data.get('status')}")
+            return []
+        
+        places = []
+        for place in data.get("results", [])[:10]:
+            place_id = place.get("place_id")
+            
+            # Get detailed information
+            details = {}
+            if place_id:
+                detail_url = "https://maps.googleapis.com/maps/api/place/details/json"
+                detail_params = {
+                    "place_id": place_id,
+                    "fields": "name,formatted_address,formatted_phone_number,international_phone_number,website,opening_hours,price_level,rating,user_ratings_total,reviews,types,geometry,photos,business_status,url",
+                    "key": api_key
+                }
+                try:
+                    detail_response = requests.get(detail_url, params=detail_params, timeout=10)
+                    if detail_response.status_code == 200:
+                        details = detail_response.json().get("result", {})
+                except:
+                    pass
+            
+            place_info = {
+                "source": "Google Places",
+                "place_id": place_id,
+                "name": place.get("name", "Unknown"),
+                "coordinates": {
+                    "lat": place["geometry"]["location"]["lat"],
+                    "lon": place["geometry"]["location"]["lng"]
+                },
+                "address": details.get("formatted_address", place.get("vicinity", "N/A")),
+                "rating": place.get("rating", "N/A"),
+                "user_ratings_total": place.get("user_ratings_total", 0),
+                "price_level": place.get("price_level", "N/A"),
+                "types": place.get("types", []),
+                "business_status": place.get("business_status", "N/A"),
+                "phone": details.get("formatted_phone_number", "N/A"),
+                "international_phone": details.get("international_phone_number", "N/A"),
+                "website": details.get("website", "N/A"),
+                "url": details.get("url", "N/A"),
+                "opening_hours": details.get("opening_hours", {}).get("weekday_text", []),
+                "photos": details.get("photos", []),
+                "reviews": [
+                    {
+                        "author": r.get("author_name"),
+                        "rating": r.get("rating"),
+                        "text": r.get("text", "")[:200],
+                        "time": r.get("relative_time_description")
+                    }
+                    for r in details.get("reviews", [])[:3]
+                ]
+            }
+            places.append(place_info)
+        
+        return places
+        
+    except Exception as e:
+        print(f"❌ Google Places API error: {e}")
+        return []
+
+
+def search_overpass_api(lat: float, lon: float, place_type: str, radius: int):
+    """Search places using Overpass API with ALL available OSM data"""
+    
+    type_mapping = {
+        "restaurant": "restaurant",
+        "cafe": "cafe",
+        "bar": "bar",
+        "pub": "pub",
+        "fast_food": "fast_food",
+        "museum": "museum",
+        "gallery": "gallery",
+        "cinema": "cinema",
+        "theatre": "theatre",
+        "nightclub": "nightclub",
+        "park": "park",
+        "hotel": "hotel",
+        "shop": "shop",
+        "gym": "gym",
+        "library": "library"
+    }
+    
+    amenity = type_mapping.get(place_type.lower(), place_type)
+    
+    url = "https://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json][timeout:25];
+    (
+      node(around:{radius},{lat},{lon})["amenity"="{amenity}"];
+      way(around:{radius},{lat},{lon})["amenity"="{amenity}"];
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+    
+    try:
+        response = requests.post(url, data=query, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"⚠️ Overpass API status: {response.status_code}")
+            return []
+        
+        data = response.json()
+        places = []
+        
+        for element in data.get("elements", [])[:10]:
+            if element.get("type") not in ["node", "way"]:
+                continue
+                
+            tags = element.get("tags", {})
+            
+            if element.get("type") == "node":
+                element_lat = element.get("lat")
+                element_lon = element.get("lon")
+            else:
+                element_lat = tags.get("lat") or element.get("lat")
+                element_lon = tags.get("lon") or element.get("lon")
+            
+            if not element_lat or not element_lon:
+                continue
+            
+            place_info = {
+                "source": "OpenStreetMap",
+                "osm_id": element.get("id"),
+                "osm_type": element.get("type"),
+                "name": tags.get("name", "Unknown"),
+                "coordinates": {
+                    "lat": element_lat,
+                    "lon": element_lon
+                },
+                "amenity": tags.get("amenity", "N/A"),
+                "cuisine": tags.get("cuisine", "N/A"),
+                "address": f"{tags.get('addr:street', '')} {tags.get('addr:housenumber', '')}".strip() or "N/A",
+                "city": tags.get("addr:city", "N/A"),
+                "postcode": tags.get("addr:postcode", "N/A"),
+                "phone": tags.get("phone") or tags.get("contact:phone", "N/A"),
+                "website": tags.get("website") or tags.get("contact:website", "N/A"),
+                "email": tags.get("email") or tags.get("contact:email", "N/A"),
+                "opening_hours": tags.get("opening_hours", "N/A"),
+                "wheelchair": tags.get("wheelchair", "N/A"),
+                "outdoor_seating": tags.get("outdoor_seating", "N/A"),
+                "delivery": tags.get("delivery", "N/A"),
+                "takeaway": tags.get("takeaway", "N/A"),
+                "smoking": tags.get("smoking", "N/A"),
+                "internet_access": tags.get("internet_access", "N/A"),
+                "wifi": tags.get("internet_access:fee", "N/A"),
+                "rating": "N/A",
+                "description": tags.get("description", "N/A"),
+                "brand": tags.get("brand", "N/A"),
+                "operator": tags.get("operator", "N/A"),
+                "capacity": tags.get("capacity", "N/A"),
+                "all_tags": tags
+            }
+            places.append(place_info)
+        
+        return places
+        
+    except Exception as e:
+        print(f"❌ Overpass API error: {e}")
+        return []
 
