@@ -152,7 +152,7 @@ if search_mode == "By Website":
                                     if img:
                                         # Display in column
                                         with cols[images_displayed % 3]:
-                                            st.image(img, use_container_width=True)
+                                            st.image(img, width='stretch')
                                             
                                             # Show metadata
                                             st.caption(f"**{img_data.get('filename', 'Unknown')}**")
@@ -254,7 +254,7 @@ elif search_mode == "By Place Name":
                                 with cols[idx % 3]:
                                     try:
                                         if source == "mock_data":
-                                            st.image(img_data["url"], caption=img_data["title"], use_container_width=True)
+                                            st.image(img_data["url"], caption=img_data["title"], width='stretch')
                                         else:
                                             img_url = img_data.get("url")
                                             
@@ -277,7 +277,7 @@ elif search_mode == "By Place Name":
                                             if img.size[0] < 50 or img.size[1] < 50:
                                                 continue
                                             
-                                            st.image(img, caption=img_data.get("title", "Image"), use_container_width=True)
+                                            st.image(img, caption=img_data.get("title", "Image"), width='stretch')
                                     except:
                                         pass
                         else:
@@ -412,291 +412,338 @@ else:  # AI Chat Assistant
                                 if parsed.get("search_context"):
                                     st.info(f"**🔍 Search context:** {parsed['search_context']}")
                     
-                    # Show places with images
+                    # Show places with images (using width='stretch')
                     if "places" in message:
                         places = message["places"]
                         
                         st.markdown(f"### 📍 Found {len(places)} Places")
                         
                         for place_idx, place_data in enumerate(places):
-                            place_info = place_data["place_info"]
-                            images = place_data["images"]
+                            place_info = place_data.get("place_info", {})
+                            images = place_data.get("images", [])
                             
-                            # Place card
                             with st.container():
-                                st.markdown(f"#### {place_idx + 1}. {place_info['name']}")
-                                
-                                # Info columns
-                                info_col1, info_col2, info_col3 = st.columns(3)
-                                
-                                with info_col1:
-                                    if place_info.get("rating") != "N/A":
-                                        st.metric("⭐ Rating", place_info["rating"])
-                                    else:
-                                        st.caption("⭐ No rating")
-                                
-                                with info_col2:
-                                    # Safely get cuisine (only for certain sources)
-                                    cuisine = place_info.get("cuisine")
-                                    if cuisine and cuisine != "N/A":
-                                        st.caption(f"🍽️ {cuisine}")
-                                    
-                                    # Show source
-                                    st.caption(f"📍 {place_info.get('source', 'Unknown')}")
-                                
-                                with info_col3:
-                                    address = place_info.get("address", "N/A")
-                                    if address and address != "N/A":
-                                        st.caption(f"🏠 {address[:50]}...")
-                                    
-                                    website = place_info.get("website")
-                                    if website and website != "N/A" and website.startswith("http"):
-                                        st.caption(f"[🌐 Website]({website})")
-
                                 # Images
                                 if images:
-                                    img_cols = st.columns(len(images))
+                                    num_images = min(len(images), 3)
+                                    img_cols = st.columns(num_images)
                                     
-                                    for img_idx, img_data in enumerate(images):
+                                    for img_idx, img_data in enumerate(images[:num_images]):
                                         with img_cols[img_idx]:
                                             try:
-                                                # Load image with proper headers
-                                                img_url = img_data["url"]
+                                                img_url = img_data.get("url", "")
                                                 
-                                                # Skip placeholders in display
-                                                if "placeholder" not in img_url.lower():
+                                                if not img_url:
+                                                    continue
+                                                
+                                                if "placeholder" in img_url.lower():
+                                                    st.image(img_url, width='stretch')
+                                                    st.caption("🖼️ No photos")
+                                                elif img_url.startswith("https://maps.googleapis.com"):
+                                                    st.image(img_url, width='stretch')
+                                                    st.caption("✨ Google Photos")
+                                                else:
                                                     img, error = load_image_with_referer(
                                                         img_url,
                                                         place_info.get("website", "")
                                                     )
-                                                
+                                                    
                                                     if img:
-                                                        st.image(img, use_container_width=True)
-                                                        st.caption(f"Confidence: {img_data['confidence']:.2f}")
-                                                        st.caption(f"Source: {img_data['source']}")
+                                                        target_width = 400
+                                                        target_height = 300
+                                                        img_resized = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                                                        
+                                                        st.image(img_resized, width='stretch')
+                                                        source = img_data.get("source", "web")
+                                                        st.caption(f"📷 {source}")
                                                     else:
-                                                        st.image(img_url, use_container_width=True)
-                                                        st.caption(f"⚠️ {error}")
-                                                else:
-                                                    st.image(img_url, use_container_width=True)
-                                                    st.caption("No photos available")
+                                                        try:
+                                                            st.image(img_url, width='stretch')
+                                                            st.caption("📸 Photo")
+                                                        except:
+                                                            st.caption("❌ Failed to load")
                                             
                                             except Exception as e:
-                                                st.caption(f"❌ Error loading image")
-                                else:
-                                    st.caption("🖼️ No images available")
+                                                st.caption("❌ Error")
                                 
-                                # Additional info in expander
+                                st.markdown("---")
+                                
+                                # Title + Rating
+                                title_col, rating_col = st.columns([3, 1])
+                                
+                                with title_col:
+                                    st.markdown(f"### {place_idx + 1}. {place_info.get('name', 'Unknown')}")
+                                    source = place_info.get("source", "Unknown")
+                                    source_emoji = "🌐" if source == "Google Places" else "🗺️"
+                                    st.caption(f"{source_emoji} {source}")
+                                
+                                with rating_col:
+                                    rating = place_info.get("rating", "N/A")
+                                    if rating != "N/A":
+                                        try:
+                                            rating_float = float(rating)
+                                            full_stars = int(rating_float)
+                                            half_star = (rating_float - full_stars) >= 0.5
+                                            
+                                            star_display = "⭐" * full_stars
+                                            if half_star:
+                                                star_display += "✨"
+                                            
+                                            st.markdown(f"### {star_display}")
+                                            st.caption(f"**{rating_float:.1f}** / 5.0")
+                                            
+                                            user_ratings = place_info.get("user_ratings_total", 0)
+                                            if user_ratings > 0:
+                                                st.caption(f"({user_ratings} reviews)")
+                                        except:
+                                            st.caption(f"⭐ {rating}")
+                                    else:
+                                        st.caption("⭐ No rating")
+                                
+                                # ==========================================
+                                # INFO ROW (Address, Phone, Website)
+                                # ==========================================
+                                info_col1, info_col2, info_col3 = st.columns(3)
+                                
+                                with info_col1:
+                                    # Address
+                                    address = place_info.get("address", "N/A")
+                                    if address and address != "N/A":
+                                        if len(address) > 40:
+                                            st.caption(f"📍 {address[:37]}...")
+                                        else:
+                                            st.caption(f"📍 {address}")
+                                    
+                                    # Cuisine
+                                    cuisine = place_info.get("cuisine")
+                                    if cuisine and cuisine != "N/A":
+                                        st.caption(f"🍽️ {cuisine}")
+                                
+                                with info_col2:
+                                    # Phone
+                                    phone = place_info.get("phone")
+                                    if phone and phone != "N/A":
+                                        st.caption(f"📞 {phone}")
+                                    
+                                    # Price level (Google Places)
+                                    price_level = place_info.get("price_level")
+                                    if price_level and price_level != "N/A":
+                                        try:
+                                            price_int = int(price_level)
+                                            price_indicator = "💰" * price_int
+                                            st.caption(f"Price: {price_indicator}")
+                                        except:
+                                            pass
+                                
+                                with info_col3:
+                                    # Website
+                                    website = place_info.get("website")
+                                    if website and website != "N/A" and website.startswith("http"):
+                                        st.markdown(f"[🌐 Website]({website})")
+                                    
+                                    # Google Maps link
+                                    google_url = place_info.get("url")
+                                    if google_url and google_url != "N/A" and google_url.startswith("http"):
+                                        st.markdown(f"[🗺️ Maps]({google_url})")
+                                
+                                # ==========================================
+                                # QUICK FEATURES (Icon row)
+                                # ==========================================
+                                features = []
+                                
+                                # OSM features
+                                if place_info.get("wheelchair") == "yes":
+                                    features.append("♿")
+                                if place_info.get("outdoor_seating") == "yes":
+                                    features.append("🌳")
+                                if place_info.get("delivery") == "yes":
+                                    features.append("🚚")
+                                if place_info.get("takeaway") == "yes":
+                                    features.append("📦")
+                                if place_info.get("internet_access") in ["wlan", "yes"]:
+                                    features.append("📶")
+                                if place_info.get("smoking") == "no":
+                                    features.append("🚭")
+                                
+                                # Google features
+                                business_status = place_info.get("business_status")
+                                if business_status == "OPERATIONAL":
+                                    features.append("✅")
+                                
+                                if features:
+                                    st.caption(" ".join(features))
+                                
+                                # ==========================================
+                                # EXPANDABLE DETAILS
+                                # ==========================================
                                 with st.expander("ℹ️ More details"):
                                     details_col1, details_col2 = st.columns(2)
                                     
                                     with details_col1:
-                                        st.write("**Location:**")
+                                        st.markdown("**📍 Location**")
                                         coords = place_info.get("coordinates", {})
                                         if coords and isinstance(coords, dict):
-                                            lat = coords.get("lat")
-                                            lon = coords.get("lon")
-                                            if lat is not None and lon is not None:
+                                            lat_val = coords.get("lat")
+                                            lon_val = coords.get("lon")
+                                            if lat_val is not None and lon_val is not None:
                                                 try:
-                                                    st.write(f"📍 {float(lat):.4f}, {float(lon):.4f}")
+                                                    st.caption(f"{float(lat_val):.4f}, {float(lon_val):.4f}")
                                                 except:
-                                                    st.write(f"📍 {lat}, {lon}")
+                                                    st.caption(f"{lat_val}, {lon_val}")
                                         else:
-                                            # Fallback: try direct access (for older format)
-                                            lat = place_info.get("lat")
-                                            lon = place_info.get("lon")
-                                            if lat is not None and lon is not None:
+                                            # Fallback: try direct access
+                                            lat_val = place_info.get("lat")
+                                            lon_val = place_info.get("lon")
+                                            if lat_val is not None and lon_val is not None:
                                                 try:
-                                                    st.write(f"📍 {float(lat):.4f}, {float(lon):.4f}")
+                                                    st.caption(f"{float(lat_val):.4f}, {float(lon_val):.4f}")
                                                 except:
-                                                    st.write(f"📍 {lat}, {lon}")
+                                                    st.caption(f"{lat_val}, {lon_val}")
                                         
-                                        phone = place_info.get("phone", "N/A")
+                                        # Full address
+                                        address = place_info.get("address", "N/A")
+                                        if address and address != "N/A":
+                                            st.caption(address)
+                                        
+                                        # Contact info
+                                        st.markdown("**📞 Contact**")
+                                        phone = place_info.get("phone") or place_info.get("international_phone")
                                         if phone and phone != "N/A":
-                                            st.write(f"**Phone:** {phone}")
+                                            st.caption(f"Phone: {phone}")
                                         
                                         email = place_info.get("email", "N/A")
                                         if email and email != "N/A":
-                                            st.write(f"**Email:** {email}")
-                                        
-                                        # Business status (Google Places)
-                                        business_status = place_info.get("business_status", "N/A")
-                                        if business_status and business_status != "N/A":
-                                            status_emoji = "✅" if business_status == "OPERATIONAL" else "⚠️"
-                                            st.write(f"**Status:** {status_emoji} {business_status}")
+                                            st.caption(f"Email: {email}")
                                     
                                     with details_col2:
+                                        # Opening hours
                                         opening_hours = place_info.get("opening_hours", [])
                                         if opening_hours and opening_hours != "N/A":
-                                            st.write("**Opening Hours:**")
+                                            st.markdown("**🕐 Opening Hours**")
                                             if isinstance(opening_hours, list) and opening_hours:
-                                                for hours in opening_hours[:3]:
+                                                for hours in opening_hours[:5]:
                                                     st.caption(hours)
                                             elif isinstance(opening_hours, str):
                                                 st.caption(opening_hours)
                                         
-                                        # OSM-specific features
-                                        if place_info.get("source") == "OpenStreetMap":
-                                            features = []
-                                            
-                                            if place_info.get("wheelchair") == "yes":
-                                                features.append("♿ Wheelchair accessible")
-                                            if place_info.get("outdoor_seating") == "yes":
-                                                features.append("🌳 Outdoor seating")
-                                            if place_info.get("delivery") == "yes":
-                                                features.append("🚚 Delivery")
-                                            if place_info.get("takeaway") == "yes":
-                                                features.append("📦 Takeaway")
-                                            if place_info.get("internet_access") in ["wlan", "yes"]:
-                                                features.append("📶 WiFi")
-                                            if place_info.get("smoking") == "no":
-                                                features.append("🚭 Non-smoking")
-                                            
-                                            if features:
-                                                st.write("**Features:**")
-                                                for feature in features:
-                                                    st.caption(feature)
+                                        # Features
+                                        st.markdown("**✨ Features**")
+                                        feature_list = []
                                         
-                                        # Google-specific: reviews
-                                        if place_info.get("source") == "Google Places":
-                                            reviews = place_info.get("reviews", [])
-                                            if reviews and isinstance(reviews, list):
-                                                st.write("**Recent Reviews:**")
-                                                for review in reviews[:2]:
-                                                    author = review.get("author", "Anonymous")
-                                                    rating = review.get("rating", "N/A")
-                                                    text = review.get("text", "")
-                                                    
-                                                    st.caption(f"⭐ {rating} - {author}")
-                                                    if text:
-                                                        truncated_text = text[:100]
-                                                        if len(text) > 100:
-                                                            truncated_text += "..."
-                                                        st.caption(f"_{truncated_text}_")
-                                            
-                                            # Google Maps URL
-                                            google_url = place_info.get("url")
-                                            if google_url and google_url != "N/A":
-                                                st.markdown(f"[🗺️ Open in Google Maps]({google_url})")
+                                        if place_info.get("wheelchair") == "yes":
+                                            feature_list.append("♿ Wheelchair accessible")
+                                        if place_info.get("outdoor_seating") == "yes":
+                                            feature_list.append("🌳 Outdoor seating")
+                                        if place_info.get("delivery") == "yes":
+                                            feature_list.append("🚚 Delivery available")
+                                        if place_info.get("takeaway") == "yes":
+                                            feature_list.append("📦 Takeaway")
+                                        if place_info.get("internet_access") in ["wlan", "yes"]:
+                                            feature_list.append("📶 WiFi")
+                                        if place_info.get("smoking") == "no":
+                                            feature_list.append("🚭 Non-smoking")
+                                        
+                                        if feature_list:
+                                            for feature in feature_list:
+                                                st.caption(feature)
+                                        else:
+                                            st.caption("No features listed")
                                     
-                                    # Debug info
-                                    with st.expander("🔧 Debug Info", expanded=False):
-                                        img_method = place_data.get("image_search_method", "unknown")
-                                        st.caption(f"Image source: {img_method}")
-                                        
-                                        place_id = place_info.get("place_id") or place_info.get("osm_id")
-                                        if place_id:
-                                            st.caption(f"ID: {place_id}")
-                                        
-                                        osm_type = place_info.get("osm_type")
-                                        if osm_type:
-                                            st.caption(f"OSM Type: {osm_type}")
-                                        
-                                        amenity = place_info.get("amenity")
-                                        if amenity and amenity != "N/A":
-                                            st.caption(f"Amenity: {amenity}")
+                                    # Reviews (Google Places)
+                                    if place_info.get("source") == "Google Places":
+                                        reviews = place_info.get("reviews", [])
+                                        if reviews and isinstance(reviews, list):
+                                            st.markdown("---")
+                                            st.markdown("**💬 Recent Reviews**")
+                                            
+                                            for review in reviews[:2]:
+                                                author = review.get("author", "Anonymous")
+                                                rating = review.get("rating", "N/A")
+                                                text = review.get("text", "")
+                                                time = review.get("time", "")
+                                                
+                                                # Star display for review
+                                                if isinstance(rating, (int, float)):
+                                                    review_stars = "⭐" * int(rating)
+                                                    st.caption(f"**{author}** {review_stars} ({rating}/5)")
+                                                else:
+                                                    st.caption(f"**{author}** ({rating})")
+                                                
+                                                if text:
+                                                    truncated_text = text[:150]
+                                                    if len(text) > 150:
+                                                        truncated_text += "..."
+                                                    st.caption(f"_{truncated_text}_")
+                                                
+                                                if time:
+                                                    st.caption(f"🕐 {time}")
+                                                
+                                                st.caption("")
+                                    
+                                    # Types (Google)
+                                    types = place_info.get("types", [])
+                                    if types:
+                                        st.markdown("---")
+                                        st.caption(f"**Categories:** {', '.join(types[:5])}")
+                                    
+                                    # Image search method
+                                    st.markdown("---")
+                                    img_method = place_data.get("image_search_method", "unknown")
+                                    st.caption(f"🔍 Image source: {img_method}")
                                 
                                 st.markdown("---")
     
-    # Chat input
-    st.markdown("---")
-    user_message = st.chat_input("💬 Tell me what you're looking for...")
+    # Chat input (THIS WAS MISSING!)
+    user_input = st.chat_input("Ask me anything... (e.g., 'Find a nice Italian restaurant')")
     
-    if user_message:
-        # Add user message to history
+    if user_input:
+        # Add user message
         st.session_state.chat_history.append({
             "role": "user",
-            "content": user_message
+            "content": user_input
         })
         
-        # Send to backend for full search
-        with st.spinner("🔍 Searching for places with photos..."):
+        # Make API request
+        with st.spinner("🔍 Searching for places..."):
             try:
                 response = requests.get(
                     f"{BACKEND_URL}/search-places-with-images",
                     params={
-                        "request": user_message,
+                        "request": user_input,
                         "lat": lat,
                         "lon": lon,
                         "radius": radius,
                         "limit": max_places,
                         "images_per_place": images_per_place
                     },
-                    timeout=180  # 3 minutes for complex search
+                    timeout=120
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if data.get("status") == "success":
-                        parsed = data.get("parsed_context", {})
-                        places = data.get("places", [])
-                        
-                        # Create friendly response
-                        response_text = f"Great! I found **{len(places)} places** for you:\n\n"
-                        
-                        if parsed.get("activity_type"):
-                            response_text += f"🎯 **Activity:** {parsed['activity_type']}\n"
-                        
-                        if parsed.get("place_types"):
-                            response_text += f"📍 **Types:** {', '.join(parsed['place_types'])}\n"
-                        
-                        response_text += f"\n✨ Check out the places below with photos!"
-                        
-                        # Add assistant response with places
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "content": response_text,
-                            "parsed_context": parsed,
-                            "places": places
+                            "content": f"Found {data.get('total_places', 0)} places!",
+                            "parsed_context": data.get("parsed_context", {}),
+                            "places": data.get("places", [])
                         })
-                        
                     else:
-                        error_msg = data.get('message', 'Unknown error')
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "content": f"❌ Sorry, I encountered an error: {error_msg}\n\nPlease try rephrasing your request."
+                            "content": f"❌ Error: {data.get('message', 'Unknown error')}"
                         })
                 else:
                     st.session_state.chat_history.append({
                         "role": "assistant",
-                        "content": f"❌ Backend error: HTTP {response.status_code}\n\nPlease make sure the backend is running."
+                        "content": f"❌ Backend error: HTTP {response.status_code}"
                     })
             
-            except requests.exceptions.Timeout:
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": "⏱️ Request timeout. The search took too long. Try:\n- Reducing search radius\n- Reducing max places\n- Simplifying your request"
-                })
             except Exception as e:
                 st.session_state.chat_history.append({
                     "role": "assistant",
-                    "content": f"❌ Error: {str(e)}\n\nPlease try again or contact support."
+                    "content": f"❌ Error: {str(e)}"
                 })
         
         st.rerun()
-    
-    # Clear chat button
-    if st.session_state.chat_history:
-        st.markdown("---")
-        col1, col2 = st.columns([3, 1])
-        with col2:
-            if st.button("🗑️ Clear chat", type="secondary", use_container_width=True):
-                st.session_state.chat_history = []
-                st.session_state.last_parsed_context = None
-                st.rerun()
-
-# Footer
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 Backend Status")
-try:
-    health_check = requests.get(f"{BACKEND_URL}/", timeout=5)
-    if health_check.status_code == 200:
-        st.sidebar.success("✅ Backend online")
-    else:
-        st.sidebar.error("❌ Backend error")
-except:
-    st.sidebar.error("❌ Backend offline")
-
-st.sidebar.markdown("---")
-st.sidebar.info("💡 **Tip:** Use the chat to describe what you're looking for naturally!")
