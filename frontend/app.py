@@ -423,52 +423,11 @@ else:  # AI Chat Assistant
                             images = place_data.get("images", [])
                             
                             with st.container():
-                                # Images
-                                if images:
-                                    num_images = min(len(images), 3)
-                                    img_cols = st.columns(num_images)
-                                    
-                                    for img_idx, img_data in enumerate(images[:num_images]):
-                                        with img_cols[img_idx]:
-                                            try:
-                                                img_url = img_data.get("url", "")
-                                                
-                                                if not img_url:
-                                                    continue
-                                                
-                                                if "placeholder" in img_url.lower():
-                                                    st.image(img_url, width='stretch')
-                                                    st.caption("🖼️ No photos")
-                                                elif img_url.startswith("https://maps.googleapis.com"):
-                                                    st.image(img_url, width='stretch')
-                                                    st.caption("✨ Google Photos")
-                                                else:
-                                                    img, error = load_image_with_referer(
-                                                        img_url,
-                                                        place_info.get("website", "")
-                                                    )
-                                                    
-                                                    if img:
-                                                        target_width = 400
-                                                        target_height = 300
-                                                        img_resized = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
-                                                        
-                                                        st.image(img_resized, width='stretch')
-                                                        source = img_data.get("source", "web")
-                                                        st.caption(f"📷 {source}")
-                                                    else:
-                                                        try:
-                                                            st.image(img_url, width='stretch')
-                                                            st.caption("📸 Photo")
-                                                        except:
-                                                            st.caption("❌ Failed to load")
-                                            
-                                            except Exception as e:
-                                                st.caption("❌ Error")
-                                
                                 st.markdown("---")
                                 
-                                # Title + Rating
+                                # ==========================================
+                                # TITLE + RATING (First)
+                                # ==========================================
                                 title_col, rating_col = st.columns([3, 1])
                                 
                                 with title_col:
@@ -572,6 +531,54 @@ else:  # AI Chat Assistant
                                 
                                 if features:
                                     st.caption(" ".join(features))
+                                
+                                # ==========================================
+                                # IMAGES SECTION (Now AFTER text)
+                                # ==========================================
+                                if images:
+                                    st.markdown("**📸 Photos:**")
+                                    num_images = min(len(images), 3)
+                                    img_cols = st.columns(num_images)
+                                    
+                                    for img_idx, img_data in enumerate(images[:num_images]):
+                                        with img_cols[img_idx]:
+                                            try:
+                                                img_url = img_data.get("url", "")
+                                                
+                                                if not img_url:
+                                                    continue
+                                                
+                                                if "placeholder" in img_url.lower():
+                                                    st.image(img_url, width='stretch')
+                                                    st.caption("🖼️ No photos")
+                                                elif img_url.startswith("https://maps.googleapis.com"):
+                                                    st.image(img_url, width='stretch')
+                                                    st.caption("✨ Google Photos")
+                                                else:
+                                                    img, error = load_image_with_referer(
+                                                        img_url,
+                                                        place_info.get("website", "")
+                                                    )
+                                                    
+                                                    if img:
+                                                        target_width = 400
+                                                        target_height = 300
+                                                        img_resized = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                                                        
+                                                        st.image(img_resized, width='stretch')
+                                                        source = img_data.get("source", "web")
+                                                        st.caption(f"📷 {source}")
+                                                    else:
+                                                        try:
+                                                            st.image(img_url, width='stretch')
+                                                            st.caption("📸 Photo")
+                                                        except:
+                                                            st.caption("❌ Failed to load")
+                                            
+                                            except Exception as e:
+                                                st.caption("❌ Error")
+                                else:
+                                    st.caption("🖼️ No photos available")
                                 
                                 # ==========================================
                                 # EXPANDABLE DETAILS
@@ -690,10 +697,8 @@ else:  # AI Chat Assistant
                                     st.markdown("---")
                                     img_method = place_data.get("image_search_method", "unknown")
                                     st.caption(f"🔍 Image source: {img_method}")
-                                
-                                st.markdown("---")
     
-    # Chat input (THIS WAS MISSING!)
+    # Chat input (Залишається внизу!)
     user_input = st.chat_input("Ask me anything... (e.g., 'Find a nice Italian restaurant')")
     
     if user_input:
