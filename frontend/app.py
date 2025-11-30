@@ -345,35 +345,37 @@ elif search_mode == "Smart Request":
 
 else:  # AI Chat Assistant
     st.header("💬 AI Chat Assistant")
-    st.markdown("Tell me what you're looking for, and I'll help you understand your request!")
+    st.markdown("Tell me what you're looking for, and I'll find places with photos!")
+    
+    # Location settings in sidebar
+    with st.sidebar:
+        st.markdown("### 📍 Search Location")
+        lat = st.number_input("Latitude", value=48.7164, format="%.4f")
+        lon = st.number_input("Longitude", value=21.2611, format="%.4f")
+        radius = st.slider("Search radius (m)", 100, 2000, 500)
+        
+        st.markdown("### ⚙️ Settings")
+        max_places = st.slider("Max places", 1, 10, 5)
+        images_per_place = st.slider("Images per place", 1, 5, 3)
     
     # Quick suggestions
     st.markdown("### 💡 Try these:")
     col1, col2, col3 = st.columns(3)
     
-    with col1:
-        if st.button("🍕 Find Italian restaurant", use_container_width=True):
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": "I want to find a good Italian restaurant in Košice"
-            })
-            st.rerun()
+    suggestions = [
+        ("🍕 Italian restaurant", "Find a good Italian restaurant in Košice"),
+        ("🍵 Cozy tea house", "Show me cozy tea houses with good interior"),
+        ("🏛️ Museum to visit", "I want to visit a museum with interesting exhibits")
+    ]
     
-    with col2:
-        if st.button("🍵 Tea house with photos", use_container_width=True):
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": "Show me photos of tea houses with good interior"
-            })
-            st.rerun()
-    
-    with col3:
-        if st.button("🏛️ Museum visit", use_container_width=True):
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": "I want to visit a museum with wheelchair access"
-            })
-            st.rerun()
+    for col, (label, prompt) in zip([col1, col2, col3], suggestions):
+        with col:
+            if st.button(label, use_container_width=True):
+                st.session_state.chat_history.append({
+                    "role": "user",
+                    "content": prompt
+                })
+                st.rerun()
     
     st.markdown("---")
     
@@ -389,70 +391,107 @@ else:  # AI Chat Assistant
                 with st.chat_message("assistant", avatar="🤖"):
                     st.markdown(message["content"])
                     
-                    # Show parsed context if available
+                    # Show parsed context
                     if "parsed_context" in message:
-                        with st.expander("📊 Understood Context", expanded=True):
+                        with st.expander("📊 Understood Context", expanded=False):
                             parsed = message["parsed_context"]
                             
-                            # Activity Type
-                            if parsed.get("activity_type"):
-                                st.info(f"**🎯 Activity:** {parsed['activity_type']}")
+                            col1, col2 = st.columns(2)
                             
-                            # Place Types
-                            if parsed.get("place_types"):
-                                st.success(f"**📍 Looking for:** {', '.join(parsed['place_types'])}")
-                            
-                            # Cuisine
-                            if parsed.get("cuisine"):
-                                st.warning(f"**🍽️ Cuisine:** {parsed['cuisine']}")
-                            
-                            # Location
-                            location = parsed.get("location", {})
-                            if location.get("city"):
-                                st.info(f"**📌 Location:** {location['city']}")
-                            
-                            # Preferences
-                            prefs = parsed.get("preferences", {})
-                            if any(prefs.values()):
-                                st.markdown("**⚙️ Preferences:**")
-                                pref_cols = st.columns(3)
-                                col_idx = 0
+                            with col1:
+                                if parsed.get("activity_type"):
+                                    st.info(f"**🎯 Activity:** {parsed['activity_type']}")
                                 
-                                if prefs.get("budget"):
-                                    with pref_cols[col_idx % 3]:
-                                        st.caption(f"💰 Budget: {prefs['budget']}")
-                                    col_idx += 1
-                                
-                                if prefs.get("rating_min"):
-                                    with pref_cols[col_idx % 3]:
-                                        st.caption(f"⭐ Min rating: {prefs['rating_min']}")
-                                    col_idx += 1
-                                
-                                if prefs.get("wheelchair_accessible"):
-                                    with pref_cols[col_idx % 3]:
-                                        st.caption("♿ Wheelchair accessible")
-                                    col_idx += 1
-                                
-                                if prefs.get("outdoor_seating"):
-                                    with pref_cols[col_idx % 3]:
-                                        st.caption("🌳 Outdoor seating")
-                                    col_idx += 1
-                                
-                                if prefs.get("dog_friendly"):
-                                    with pref_cols[col_idx % 3]:
-                                        st.caption("🐕 Dog friendly")
-                                    col_idx += 1
+                                if parsed.get("place_types"):
+                                    st.success(f"**📍 Looking for:** {', '.join(parsed['place_types'])}")
                             
-
-                            # Additional notes
-                            if parsed.get("additional_notes"):
-                                st.markdown(f"**📝 Notes:** {parsed['additional_notes']}")
+                            with col2:
+                                if parsed.get("cuisine"):
+                                    st.warning(f"**🍽️ Cuisine:** {parsed['cuisine']}")
+                                
+                                if parsed.get("search_context"):
+                                    st.info(f"**🔍 Search context:** {parsed['search_context']}")
+                    
+                    # Show places with images
+                    if "places" in message:
+                        places = message["places"]
+                        
+                        st.markdown(f"### 📍 Found {len(places)} Places")
+                        
+                        for place_idx, place_data in enumerate(places):
+                            place_info = place_data["place_info"]
+                            images = place_data["images"]
                             
-
-                            # Action button
-                            st.markdown("---")
-                            if st.button(f"🔍 Search for these places", key=f"search_{idx}"):
-                                st.info("🚧 Search functionality coming soon! For now, use the parsed context above.")
+                            # Place card
+                            with st.container():
+                                st.markdown(f"#### {place_idx + 1}. {place_info['name']}")
+                                
+                                # Info columns
+                                info_col1, info_col2, info_col3 = st.columns(3)
+                                
+                                with info_col1:
+                                    if place_info.get("rating") != "N/A":
+                                        st.metric("⭐ Rating", place_info["rating"])
+                                    else:
+                                        st.caption("⭐ No rating")
+                                
+                                with info_col2:
+                                    if place_info.get("cuisine") != "N/A":
+                                        st.caption(f"🍽️ {place_info['cuisine']}")
+                                    st.caption(f"📍 {place_info['source']}")
+                                
+                                with info_col3:
+                                    if place_info.get("address") != "N/A":
+                                        st.caption(f"🏠 {place_info['address']}")
+                                    if place_info.get("website") != "N/A":
+                                        st.caption(f"[🌐 Website]({place_info['website']})")
+                                
+                                # Images
+                                if images:
+                                    img_cols = st.columns(len(images))
+                                    
+                                    for img_idx, img_data in enumerate(images):
+                                        with img_cols[img_idx]:
+                                            try:
+                                                # Load image with proper headers
+                                                img_url = img_data["url"]
+                                                
+                                                # Skip placeholders in display
+                                                if "placeholder" not in img_url.lower():
+                                                    img, error = load_image_with_referer(
+                                                        img_url,
+                                                        place_info.get("website", "")
+                                                    )
+                                                
+                                                    if img:
+                                                        st.image(img, use_container_width=True)
+                                                        st.caption(f"Confidence: {img_data['confidence']:.2f}")
+                                                        st.caption(f"Source: {img_data['source']}")
+                                                    else:
+                                                        st.image(img_url, use_container_width=True)
+                                                        st.caption(f"⚠️ {error}")
+                                                else:
+                                                    st.image(img_url, use_container_width=True)
+                                                    st.caption("No photos available")
+                                            
+                                            except Exception as e:
+                                                st.caption(f"❌ Error loading image")
+                                else:
+                                    st.caption("🖼️ No images available")
+                                
+                                # Additional info in expander
+                                with st.expander("ℹ️ More details"):
+                                    st.write(f"**Coordinates:** {place_info['lat']:.4f}, {place_info['lon']:.4f}")
+                                    
+                                    if place_info.get("phone") != "N/A":
+                                        st.write(f"**Phone:** {place_info['phone']}")
+                                    
+                                    if place_info.get("opening_hours") != "N/A":
+                                        st.write(f"**Hours:** {place_info['opening_hours']}")
+                                    
+                                    st.write(f"**Image search method:** {place_data.get('image_search_method', 'unknown')}")
+                                
+                                st.markdown("---")
     
     # Chat input
     st.markdown("---")
@@ -465,100 +504,69 @@ else:  # AI Chat Assistant
             "content": user_message
         })
         
-        # Send to backend for parsing
-        with st.spinner("🤔 Understanding your request..."):
+        # Send to backend for full search
+        with st.spinner("🔍 Searching for places with photos..."):
             try:
                 response = requests.get(
-                    f"{BACKEND_URL}/request",
-                    params={"request": user_message},
-                    timeout=30
+                    f"{BACKEND_URL}/search-places-with-images",
+                    params={
+                        "request": user_message,
+                        "lat": lat,
+                        "lon": lon,
+                        "radius": radius,
+                        "limit": max_places,
+                        "images_per_place": images_per_place
+                    },
+                    timeout=180  # 3 minutes for complex search
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if data.get("status") == "success":
-                        parsed = data.get("parsed_data", {})
+                        parsed = data.get("parsed_context", {})
+                        places = data.get("places", [])
                         
                         # Create friendly response
-                        response_parts = ["Great! I understand you're looking for:\n"]
+                        response_text = f"Great! I found **{len(places)} places** for you:\n\n"
                         
                         if parsed.get("activity_type"):
-                            response_parts.append(f"- **Activity type:** {parsed['activity_type']}")
+                            response_text += f"🎯 **Activity:** {parsed['activity_type']}\n"
                         
                         if parsed.get("place_types"):
-                            places = ", ".join(parsed['place_types'])
-                            response_parts.append(f"- **Places:** {places}")
+                            response_text += f"📍 **Types:** {', '.join(parsed['place_types'])}\n"
                         
-                        if parsed.get("cuisine"):
-                            response_parts.append(f"- **Cuisine:** {parsed['cuisine']}")
+                        response_text += f"\n✨ Check out the places below with photos!"
                         
-                        location = parsed.get("location", {})
-                        if location.get("city"):
-                            response_parts.append(f"- **Location:** {location['city']}")
-                        
-                        prefs = parsed.get("preferences", {})
-                        pref_list = []
-                        if prefs.get("budget"):
-                            pref_list.append(f"{prefs['budget']} budget")
-                        if prefs.get("wheelchair_accessible"):
-                            pref_list.append("wheelchair accessible")
-                        if prefs.get("outdoor_seating"):
-                            pref_list.append("outdoor seating")
-                        if prefs.get("dog_friendly"):
-                            pref_list.append("dog friendly")
-                        
-                        if pref_list:
-                            response_parts.append(f"- **Preferences:** {', '.join(pref_list)}")
-                        
-                        if parsed.get("additional_notes"):
-                            response_parts.append(f"- **Additional notes:** {parsed['additional_notes']}")
-                        
-                        response_parts.append("\n\n✅ I've extracted this information from your request. You can use the 'Search for these places' button above to find matching locations!")
-                        
-                        friendly_response = "\n".join(response_parts)
-                        
-                        # Add assistant response with parsed context
+                        # Add assistant response with places
                         st.session_state.chat_history.append({
                             "role": "assistant",
-                            "content": friendly_response,
-                            "parsed_context": parsed
+                            "content": response_text,
+                            "parsed_context": parsed,
+                            "places": places
                         })
                         
-                        # Save last context
-                        st.session_state.last_parsed_context = parsed
-                        
                     else:
-                        # Fallback to general answer endpoint
-                        answer_response = requests.get(
-                            f"{BACKEND_URL}/answer",
-                            params={"question": user_message},
-                            timeout=30
-                        )
-                        
-                        if answer_response.status_code == 200:
-                            answer_data = answer_response.json()
-                            answer_text = answer_data.get("answer", "I'm not sure how to help with that.")
-                            
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": answer_text
-                            })
-                        else:
-                            st.session_state.chat_history.append({
-                                "role": "assistant",
-                                "content": "I'm having trouble processing your request. Could you rephrase it?"
-                            })
+                        error_msg = data.get('message', 'Unknown error')
+                        st.session_state.chat_history.append({
+                            "role": "assistant",
+                            "content": f"❌ Sorry, I encountered an error: {error_msg}\n\nPlease try rephrasing your request."
+                        })
                 else:
                     st.session_state.chat_history.append({
                         "role": "assistant",
-                        "content": f"❌ Backend error: HTTP {response.status_code}"
+                        "content": f"❌ Backend error: HTTP {response.status_code}\n\nPlease make sure the backend is running."
                     })
             
+            except requests.exceptions.Timeout:
+                st.session_state.chat_history.append({
+                    "role": "assistant",
+                    "content": "⏱️ Request timeout. The search took too long. Try:\n- Reducing search radius\n- Reducing max places\n- Simplifying your request"
+                })
             except Exception as e:
                 st.session_state.chat_history.append({
                     "role": "assistant",
-                    "content": f"❌ Error: {str(e)}\n\nPlease try again or rephrase your request."
+                    "content": f"❌ Error: {str(e)}\n\nPlease try again or contact support."
                 })
         
         st.rerun()
@@ -572,27 +580,6 @@ else:  # AI Chat Assistant
                 st.session_state.chat_history = []
                 st.session_state.last_parsed_context = None
                 st.rerun()
-    
-    # Sidebar with last context
-    if st.session_state.last_parsed_context:
-        with st.sidebar:
-            st.markdown("---")
-            st.markdown("### 🎯 Last Parsed Context")
-            
-            parsed = st.session_state.last_parsed_context
-            
-            if parsed.get("activity_type"):
-                st.caption(f"**Activity:** {parsed['activity_type']}")
-            
-            if parsed.get("place_types"):
-                st.caption(f"**Places:** {', '.join(parsed['place_types'])}")
-            
-            if parsed.get("cuisine"):
-                st.caption(f"**Cuisine:** {parsed['cuisine']}")
-            
-            if st.button("📋 Copy context JSON", use_container_width=True):
-                import json
-                st.code(json.dumps(parsed, indent=2), language="json")
 
 # Footer
 st.sidebar.markdown("---")

@@ -12,7 +12,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import time
 from typing import Optional, List, Dict
-from places_api import search_places, get_place_types
+from places_api import search_places, format_place_for_display, get_place_types
 
 app = FastAPI()
 
@@ -1356,4 +1356,283 @@ def get_answer(question: str = Query(..., description="Your question")):
     )
     answer = response.choices[0].message.content
     return {"answer": answer}
+
+@app.get("/search-places-with-images")
+def search_places_with_images(
+    request: str = Query(..., description="User's natural language request"),
+    lat: float = Query(48.7164, description="Latitude"),
+    lon: float = Query(21.2611, description="Longitude"),
+    radius: int = Query(500, description="Search radius in meters"),
+    limit: int = Query(5, description="Max number of places"),
+    images_per_place: int = Query(3, description="Max images per place")
+):
+    """
+    🎯 MAIN ENDPOINT: Parse request → Find places → Get images for each place
+    
+    Process:
+    1. Parse user request with GPT (extract activity type, place types, preferences)
+    2. Search for places using places_api
+    3. For each place, scrape images from their website
+    4. Return places with descriptions and images
+    """
+    try:
+        print(f"\n{'='*60}")
+        print(f"🔍 SMART SEARCH REQUEST")
+        print(f"{'='*60}")
+        print(f"Request: {request}")
+        print(f"Location: ({lat}, {lon})")
+        print(f"Radius: {radius}m")
+        
+        # STEP 1: Parse request with GPT
+        print(f"\n📝 STEP 1: Parsing request with GPT...")
+        
+        parse_response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": """You are an AI assistant that helps with tourism and activities.
+Your task is to analyze the user's request and extract structured information in JSON format.
+
+Output JSON structure:
+{
+  "activity_type": "string (e.g., dining, sightseeing, entertainment, sports, shopping)",
+  "place_types": ["array of place types (e.g., restaurant, cafe, museum, park)"],
+  "cuisine": "string or null (if restaurant/cafe)",
+  "preferences": {
+    "budget": "low/medium/high or null",
+    "rating_min": number or null,
+    "wheelchair_accessible": boolean or null,
+    "outdoor_seating": boolean or null,
+    "dog_friendly": boolean or null
+  },
+  "search_context": "short description for image search (e.g., 'restaurant interior', 'museum exhibits', 'park landscape')"
+}
+
+Only return valid JSON, nothing else."""
+                },
+                {"role": "user", "content": request}
+            ],
+            temperature=0.3,
+            max_tokens=500
+        )
+        
+        gpt_response = parse_response.choices[0].message.content
+        parsed_data = json.loads(gpt_response)
+        
+        print(f"✅ Parsed data:")
+        print(f"   Activity: {parsed_data.get('activity_type')}")
+        print(f"   Place types: {parsed_data.get('place_types')}")
+        print(f"   Search context: {parsed_data.get('search_context')}")
+        
+        # STEP 2: Search for places
+        print(f"\n📍 STEP 2: Searching for places...")
+        
+        place_types = parsed_data.get("place_types", ["restaurant"])
+        all_places = []
+        
+        for place_type in place_types[:3]:  # Max 3 types to avoid long searches
+            print(f"   Searching for: {place_type}")
+            places = search_places(
+                lat=lat,
+                lon=lon,
+                radius=radius,
+                place_type=place_type,
+                limit=limit,
+                use_google=False  # Use only free APIs
+            )
+            all_places.extend(places)
+        
+        # Remove duplicates
+        unique_places = []
+        seen_names = set()
+        
+        for place in all_places:
+            if place["name"] not in seen_names:
+                seen_names.add(place["name"])
+                unique_places.append(place)
+        
+        # Sort by rating
+        def get_rating(place):
+            rating = place.get("rating", "N/A")
+            try:
+                return float(rating)
+            except:
+                return 0
+        
+        unique_places.sort(key=get_rating, reverse=True)
+        unique_places = unique_places[:limit]
+        
+        print(f"✅ Found {len(unique_places)} unique places")
+        
+        # STEP 3: Get images for each place
+        print(f"\n🖼️ STEP 3: Getting images for each place...")
+        
+        search_context = parsed_data.get("search_context", "interior photos")
+        results = []
+        
+        for i, place in enumerate(unique_places):
+            print(f"\n   [{i+1}/{len(unique_places)}] Processing: {place['name']}")
+            
+            place_result = {
+                "place_info": place,
+                "images": [],
+                "image_search_method": "unknown"
+            }
+            
+            # Strategy 1: Try to scrape from website if available
+            if place.get("website") and place["website"] != "N/A":
+                print(f"      🌐 Found website: {place['website']}")
+                
+                try:
+                    # Use existing scrape function
+                    scrape_result = scrape_website_images(
+                        website=place["website"],
+                        max_pages=5,  # Quick search
+                        max_images=20,
+                        context=search_context,
+                        min_images_per_page=3,
+                        use_ai_scoring=False  # Faster without AI
+                    )
+                    
+                    if scrape_result.get("status") == "success":
+                        scraped_images = scrape_result.get("images", [])
+                        
+                        if scraped_images:
+                            print(f"      ✅ Scraped {len(scraped_images)} images from website")
+                            
+                            # Filter and rate images with GPT
+                            if len(scraped_images) > 0:
+                                # Take top images
+                                top_images = scraped_images[:images_per_place * 2]
+                                
+                                # Rate with GPT
+                                try:
+                                    rating_prompt = f"""Rate these images (0.0-1.0) for context: "{search_context}" at place "{place['name']}"
+
+Images (by index):
+{chr(10).join([f"{idx}: {img}" for idx, img in enumerate(top_images)])}
+
+Return JSON: {{"image_index": score, ...}}
+Only return relevant images (score > 0.5)."""
+
+                                    rating_response = openai.chat.completions.create(
+                                        model="gpt-3.5-turbo",
+                                        messages=[
+                                            {"role": "system", "content": "You rate image relevance. Return only JSON."},
+                                            {"role": "user", "content": rating_prompt}
+                                        ],
+                                        temperature=0.2,
+                                        max_tokens=500
+                                    )
+                                    
+                                    ratings = json.loads(rating_response.choices[0].message.content)
+                                    
+                                    # Select top rated images
+                                    rated_images = []
+                                    for idx_str, score in ratings.items():
+                                        idx = int(idx_str)
+                                        if idx < len(top_images) and score > 0.5:
+                                            rated_images.append({
+                                                "url": top_images[idx],
+                                                "confidence": score,
+                                                "source": "website"
+                                            })
+                                    
+                                    rated_images.sort(key=lambda x: x["confidence"], reverse=True)
+                                    place_result["images"] = rated_images[:images_per_place]
+                                    place_result["image_search_method"] = "website_scraping"
+                                    
+                                    print(f"      ⭐ Selected {len(place_result['images'])} top rated images")
+                                
+                                except Exception as e:
+                                    print(f"      ⚠️ Rating failed: {e}")
+                                    # Fallback: just take first N images
+                                    place_result["images"] = [
+                                        {"url": img, "confidence": 0.7, "source": "website"}
+                                        for img in scraped_images[:images_per_place]
+                                    ]
+                                    place_result["image_search_method"] = "website_scraping_unrated"
+                        
+                except Exception as e:
+                    print(f"      ❌ Website scraping failed: {e}")
+            
+            # Strategy 2: If no website or scraping failed, try Google Image Search
+            if not place_result["images"]:
+                print(f"      🔍 Trying Google Image Search...")
+                
+                try:
+                    search_query = f"{place['name']} {search_context}"
+                    
+                    google_result = get_place_images_from_google(
+                        place_name=place["name"],
+                        location=f"{lat},{lon}",
+                        use_mock=False
+                    )
+                    
+                    if google_result.get("status") == "success":
+                        google_images = google_result.get("images", [])
+                        
+                        if google_images:
+                            place_result["images"] = [
+                                {
+                                    "url": img["url"],
+                                    "confidence": 0.6,
+                                    "source": "google_images",
+                                    "title": img.get("title", "")
+                                }
+                                for img in google_images[:images_per_place]
+                            ]
+                            place_result["image_search_method"] = "google_images"
+                            print(f"      ✅ Found {len(place_result['images'])} images from Google")
+                
+                except Exception as e:
+                    print(f"      ❌ Google search failed: {e}")
+            
+            # Strategy 3: Fallback - generate placeholder
+            if not place_result["images"]:
+                print(f"      ⚠️ No images found, using placeholder")
+                place_result["images"] = [{
+                    "url": f"https://via.placeholder.com/400x300?text={place['name'].replace(' ', '+')}",
+                    "confidence": 0.1,
+                    "source": "placeholder"
+                }]
+                place_result["image_search_method"] = "placeholder"
+            
+            results.append(place_result)
+        
+        print(f"\n{'='*60}")
+        print(f"✅ SEARCH COMPLETE")
+        print(f"{'='*60}")
+        print(f"Found {len(results)} places with images")
+        
+        return {
+            "status": "success",
+            "request": request,
+            "parsed_context": parsed_data,
+            "location": {"lat": lat, "lon": lon, "radius": radius},
+            "total_places": len(results),
+            "places": results,
+            "optimization_notes": [
+                "Used free APIs (OpenStreetMap)",
+                "Scraped images from place websites when available",
+                "Fallback to Google Image Search if needed",
+                "AI-rated images for relevance"
+            ]
+        }
+    
+    except json.JSONDecodeError as e:
+        return {
+            "status": "error",
+            "message": "Failed to parse GPT response",
+            "error": str(e)
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
 
